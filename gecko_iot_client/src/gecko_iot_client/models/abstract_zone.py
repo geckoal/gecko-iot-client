@@ -1,5 +1,8 @@
+import logging
 from enum import Enum
 from typing import Any, Callable, Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class ZoneType(Enum):
@@ -41,28 +44,28 @@ class AbstractZone:
                 # Call the callback with zone type, zone id, and updates
                 self._publish_callback(self.zone_type.value, self.id, updates)
             except Exception as e:
-                print(f"Failed to publish desired state for zone {self.id}: {e}")
+                logger.error(f"Failed to publish desired state for zone {self.id}: {e}")
         else:
-            print(
+            logger.warning(
                 f"No publish callback set for zone {self.id} - cannot publish desired state"
             )
 
     # Class registry for zone types
     @classmethod
-    def _get_zone_registry(cls):
-        """Get the zone registry, creating it if it doesn't exist"""
+    def _get_zone_registry(cls) -> Dict[ZoneType, type["AbstractZone"]]:
+        """Get the zone registry, creating it if it doesn't exist."""
         if not hasattr(cls, "_registry"):
-            cls._registry = {}
+            cls._registry: Dict[ZoneType, type["AbstractZone"]] = {}
         return cls._registry
 
     @classmethod
-    def register_zone_type(cls, zone_type: ZoneType):
-        """Decorator to register a zone class with its type"""
+    def register_zone_type(cls, zone_type: ZoneType) -> Callable[[type["AbstractZone"]], type["AbstractZone"]]:
+        """Decorator to register a zone class with its type."""
 
-        def decorator(zone_class):
+        def decorator(zone_class: type["AbstractZone"]) -> type["AbstractZone"]:
             registry = cls._get_zone_registry()
             registry[zone_type] = zone_class
-            zone_class.ZONE_TYPE = zone_type
+            zone_class.ZONE_TYPE = zone_type  # type: ignore
             return zone_class
 
         return decorator
@@ -138,8 +141,8 @@ class AbstractZone:
         Args:
             state: State dictionary with current values
         """
-        # Apply field mappings if available
-        field_mappings = getattr(self, "_get_field_mappings", lambda: {})()
+        # Get field mappings from subclass implementation
+        field_mappings = self._get_field_mappings()
 
         for field_name, field_value in state.items():
             # Check if there's a mapping for this field
@@ -169,7 +172,7 @@ class AbstractZone:
         runtime_fields = self._get_runtime_state_fields()
         for field in runtime_fields:
             if hasattr(self, field):
-                config[field] = getattr(self, field)
+                config[field] = self.__dict__[field]
 
         return config
 
@@ -184,7 +187,7 @@ class AbstractZone:
         runtime_fields = self._get_runtime_state_fields()
         for field in runtime_fields:
             if hasattr(self, field):
-                config[field] = getattr(self, field)
+                config[field] = self.__dict__[field]
 
         return {
             "id": self.id,

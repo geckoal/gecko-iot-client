@@ -89,12 +89,10 @@ class FlowZone(AbstractZone):
             config=config
         )
 
-        # Initialize flow zone specific attributes with defaults
-        self.active: Optional[bool] = getattr(self, "active", None)
-        self.speed: Optional[float] = getattr(self, "speed", None)
-        self.initiators_: Optional[List[FlowZoneInitiator]] = getattr(
-            self, "initiators_", None
-        )
+        # Initialize flow zone specific attributes from config
+        self.active: Optional[bool] = config.get("active")
+        self.speed: Optional[float] = config.get("speed")
+        self.initiators_: Optional[List[FlowZoneInitiator]] = config.get("initiators_")
 
         # Validate speed if present
         if self.speed is not None:

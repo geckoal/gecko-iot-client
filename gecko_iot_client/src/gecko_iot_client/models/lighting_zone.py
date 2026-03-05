@@ -47,10 +47,10 @@ class LightingZone(AbstractZone):
             config=config,
         )
 
-        # Initialize lighting zone specific attributes
-        self.active: Optional[bool] = getattr(self, "active", None)
-        self.rgbi: Optional[RGB] = getattr(self, "rgbi", None)
-        self.effect: Optional[str] = getattr(self, "effect", None)
+        # Initialize lighting zone specific attributes from config
+        self.active: Optional[bool] = config.get("active")
+        self.rgbi: Optional[RGB] = config.get("rgbi")
+        self.effect: Optional[str] = config.get("effect")
 
         # Validate effect length if present
         if self.effect is not None and self._is_valid_effect_name(self.effect):

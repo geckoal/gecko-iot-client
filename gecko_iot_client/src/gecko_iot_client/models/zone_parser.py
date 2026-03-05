@@ -52,7 +52,7 @@ class ZoneConfigurationParser:
         self, zones_config: Dict[str, Any]
     ) -> Dict[ZoneType, List[AbstractZone]]:
         """Parse zones configuration into zone instances."""
-        logger.debug("Parsing zones configuration")
+        logger.info("Parsing zones configuration")
         zones: Dict[ZoneType, List[AbstractZone]] = {}
 
         # Check for unknown zone types first
@@ -92,7 +92,7 @@ class ZoneConfigurationParser:
                 zones[zone_type] = zone_list
 
         total_zones = sum(len(zlist) for zlist in zones.values())
-        logger.debug(f"Parsed {total_zones} zones")
+        logger.info(f"Parsed {total_zones} zones successfully")
         return zones
 
     def apply_state_to_zones(

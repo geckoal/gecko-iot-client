@@ -1,7 +1,10 @@
 from enum import Enum
+import logging
 from typing import Any, Dict, Optional
 
 from .abstract_zone import AbstractZone, ZoneType
+
+logger = logging.getLogger(__name__)
 
 
 class TemperatureControlZoneStatus(Enum):
@@ -60,13 +63,13 @@ class TemperatureControlZone(AbstractZone):
             config=config,
         )
 
-        # Initialize temperature control specific attributes
+        # Initialize temperature control specific attributes from config
         self.status_: Optional[TemperatureControlZoneStatus] = (
-            self._convert_status_to_enum(getattr(self, "status_", None))
+            self._convert_status_to_enum(config.get("status_"))
         )
-        self.temperature_: Optional[float] = getattr(self, "temperature_", None)
-        self.mode_: Optional[TemperatureControlMode] = getattr(self, "mode_", None)
-        self.set_point: Optional[float] = getattr(self, "set_point", None)
+        self.temperature_: Optional[float] = config.get("temperature_")
+        self.mode_: Optional[TemperatureControlMode] = config.get("mode_")
+        self.set_point: Optional[float] = config.get("set_point")
 
         # Validate temperature ranges if values are present
         self._validate_temperature_range()
@@ -199,8 +202,8 @@ class TemperatureControlZone(AbstractZone):
                         pass
 
         except (ValueError, KeyError) as e:
-            print(
-                f"Warning: Could not convert status value {status_value} (type: {type(status_value)}) "
+            logger.warning(
+                f"Could not convert status value {status_value} (type: {type(status_value).__name__}) "
                 f"to TemperatureControlZoneStatus: {e}"
             )
 

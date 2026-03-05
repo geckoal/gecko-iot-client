@@ -107,10 +107,10 @@ def main():
                         print(
                             f"\n💡 [{toggle_counter}] Turning light {status}: {light_zone.name}"
                         )
-                        if new_active and hasattr(light_zone, "activate"):
-                            getattr(light_zone, "activate")()
-                        elif not new_active and hasattr(light_zone, "deactivate"):
-                            getattr(light_zone, "deactivate")()
+                        if new_active:
+                            light_zone.activate()
+                        else:
+                            light_zone.deactivate()
                     else:
                         print(
                             f"\n⚠️  [{toggle_counter}] Light zone doesn't have 'active' attribute"
