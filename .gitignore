@@ -192,3 +192,7 @@ secrets.json
 *.swp
 *.swo
 *~
+
+# AI tooling
+.kiro/
+.claude/
