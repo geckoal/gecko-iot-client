@@ -46,7 +46,7 @@ class MqttTransporter(AbstractTransporter):
         self,
         broker_url: str,
         monitor_id: str,
-        token_refresh_callback: Optional[Callable[[str], str]] = None,
+        token_refresh_callback: Optional[Callable[[str], Optional[str]]] = None,
         token_refresh_buffer_seconds: int = 300,
     ):
         """
@@ -55,7 +55,8 @@ class MqttTransporter(AbstractTransporter):
         Args:
             broker_url: WebSocket URL with embedded JWT token
             monitor_id: Device monitor identifier
-            token_refresh_callback: Function to get new broker URL with fresh token
+            token_refresh_callback: Function to get new broker URL with fresh token.
+                Should return None if refresh failed (e.g., API unavailable).
             token_refresh_buffer_seconds: Seconds before expiry to refresh token
         """
         if not broker_url or not monitor_id:
@@ -89,6 +90,9 @@ class MqttTransporter(AbstractTransporter):
         # Threading for expiry monitoring
         self._monitor_thread: Optional[threading.Thread] = None
         self._monitor_stop_event = threading.Event()
+
+        # Track consecutive refresh failures for progressive backoff
+        self._consecutive_refresh_failures = 0
 
     # ========================================================================
     # AbstractTransporter Interface
@@ -294,10 +298,16 @@ class MqttTransporter(AbstractTransporter):
             if new_broker_url:
                 self._broker_url = new_broker_url
                 self._token_manager.update_broker_url(new_broker_url)
+                self._consecutive_refresh_failures = 0
                 logger.debug("Token refreshed successfully before connection")
             else:
-                logger.error("Token refresh callback returned empty URL")
+                self._consecutive_refresh_failures += 1
+                logger.error(
+                    "Token refresh callback returned None before connection - "
+                    "API may be unavailable"
+                )
         except Exception as e:
+            self._consecutive_refresh_failures += 1
             logger.error(f"Failed to refresh expired token before connection: {e}")
 
     def _setup_subscriptions(self):
@@ -375,11 +385,16 @@ class MqttTransporter(AbstractTransporter):
         """Background thread loop to monitor token expiry."""
         while not self._monitor_stop_event.is_set():
             try:
-                # Check if token needs refreshing
+                # Check if we're in a failure state — if so, don't trigger
+                # another refresh here; _schedule_refresh_retry handles the backoff
                 with self._state_lock:
                     already_refreshing = self._is_refreshing_token
 
-                if not already_refreshing and self._should_refresh_token():
+                if (
+                    not already_refreshing
+                    and self._consecutive_refresh_failures == 0
+                    and self._should_refresh_token()
+                ):
                     logger.info("Token approaching expiry, initiating refresh...")
                     self._handle_token_refresh()
 
@@ -419,12 +434,22 @@ class MqttTransporter(AbstractTransporter):
             logger.debug(
                 f"Token refresh callback completed in {callback_duration:.1f}s"
             )
+
+            # Handle callback returning None (API unavailable/failure)
             if not new_broker_url:
-                logger.error("Token refresh callback returned empty URL")
+                self._consecutive_refresh_failures += 1
+                logger.warning(
+                    "Token refresh callback returned None (attempt %d) - "
+                    "API may be unavailable, will retry with backoff",
+                    self._consecutive_refresh_failures,
+                )
                 with self._state_lock:
                     self._is_refreshing_token = False
-                self._schedule_reconnect()
+                self._schedule_refresh_retry()
                 return
+
+            # Successful refresh - reset failure counter
+            self._consecutive_refresh_failures = 0
 
             # Update broker URL and token expiry
             old_broker_url = self._broker_url
@@ -476,9 +501,44 @@ class MqttTransporter(AbstractTransporter):
 
         except Exception as e:
             logger.error(f"Token refresh failed: {e}")
+            self._consecutive_refresh_failures += 1
             with self._state_lock:
                 self._is_refreshing_token = False
-            self._schedule_reconnect()
+            self._schedule_refresh_retry()
+
+    def _schedule_refresh_retry(self):
+        """Schedule a token refresh retry with progressive backoff.
+
+        Unlike _schedule_reconnect which tries to reconnect with the current (possibly stale)
+        broker URL, this method specifically retries the token refresh callback after a delay.
+        Uses progressive backoff based on consecutive failures to avoid hammering the API
+        when it's down for maintenance.
+        """
+        # Progressive backoff: 30s, 60s, 120s, 240s, 300s (max 5 min)
+        base_delay = 30.0
+        max_delay = 300.0
+        delay = min(
+            base_delay * (2 ** (self._consecutive_refresh_failures - 1)), max_delay
+        )
+
+        logger.info(
+            "Scheduling token refresh retry in %.0fs (failure #%d)",
+            delay,
+            self._consecutive_refresh_failures,
+        )
+
+        def delayed_refresh_retry():
+            if not self._monitor_stop_event.is_set():
+                self._monitor_stop_event.wait(delay)
+                if not self._monitor_stop_event.is_set():
+                    logger.info(
+                        "Retrying token refresh (attempt %d)...",
+                        self._consecutive_refresh_failures + 1,
+                    )
+                    self._handle_token_refresh()
+
+        retry_thread = threading.Thread(target=delayed_refresh_retry, daemon=True)
+        retry_thread.start()
 
     def _schedule_reconnect(self):
         """Schedule reconnection with exponential backoff."""
