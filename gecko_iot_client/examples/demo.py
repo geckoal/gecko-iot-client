@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from gecko_iot_client import GeckoIotClient  # noqa: E402
 from gecko_iot_client.models.abstract_zone import ZoneType  # noqa: E402
+from gecko_iot_client.models.lighting_zone import LightingZone  # noqa: E402
 from gecko_iot_client.transporters.mqtt import MqttTransporter  # noqa: E402
 
 # Setup logging to see what's happening
@@ -93,13 +94,10 @@ def main():
                 # Toggle light zone every 2 seconds
                 lighting_zones = client.get_zones_by_type(ZoneType.LIGHTING_ZONE)
                 if lighting_zones:
-                    light_zone = lighting_zones[
-                        0
-                    ]  # Get first lighting zone - we know it's a LightingZone
+                    light_zone = lighting_zones[0]
                     toggle_counter += 1
 
-                    # Toggle current state (cast to access specific properties)
-                    if hasattr(light_zone, "active"):
+                    if isinstance(light_zone, LightingZone):
                         current_active = light_zone.active or False
                         new_active = not current_active
 
@@ -113,7 +111,7 @@ def main():
                             light_zone.deactivate()
                     else:
                         print(
-                            f"\n⚠️  [{toggle_counter}] Light zone doesn't have 'active' attribute"
+                            f"\n⚠️  [{toggle_counter}] Zone is not a LightingZone instance"
                         )
                 else:
                     print(f"\n⚠️  [{toggle_counter}] No lighting zones found to toggle")

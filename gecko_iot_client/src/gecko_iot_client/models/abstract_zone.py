@@ -74,7 +74,7 @@ class AbstractZone:
         Returns:
             Dictionary mapping zone types to their implementation classes
         """
-        if not hasattr(cls, "_registry"):
+        if "_registry" not in cls.__dict__:
             cls._registry: Dict[ZoneType, type["AbstractZone"]] = {}
         return cls._registry
 
@@ -159,7 +159,7 @@ class AbstractZone:
             config: Configuration dictionary with zone setup values
         """
         for field_name, field_value in config.items():
-            if hasattr(self, field_name) and not field_name.startswith("_"):
+            if field_name in self.__dict__ and not field_name.startswith("_"):
                 # Skip zone_type and id as they shouldn't change
                 if field_name not in ["zone_type", "id"]:
                     setattr(self, field_name, field_value)
@@ -178,7 +178,7 @@ class AbstractZone:
             # Check if there's a mapping for this field
             mapped_field = field_mappings.get(field_name, field_name)
 
-            if hasattr(self, mapped_field) and not mapped_field.startswith("_"):
+            if mapped_field in self.__dict__ and not mapped_field.startswith("_"):
                 setattr(self, mapped_field, field_value)
 
     def _get_runtime_state_fields(self) -> set:
@@ -215,7 +215,7 @@ class AbstractZone:
         # Add runtime state fields
         runtime_fields = self._get_runtime_state_fields()
         for field in runtime_fields:
-            if hasattr(self, field):
+            if field in self.__dict__:
                 config[field] = self.__dict__[field]
 
         return config
@@ -230,7 +230,7 @@ class AbstractZone:
         config = {}
         runtime_fields = self._get_runtime_state_fields()
         for field in runtime_fields:
-            if hasattr(self, field):
+            if field in self.__dict__:
                 config[field] = self.__dict__[field]
 
         return {

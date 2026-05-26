@@ -428,7 +428,7 @@ Utilities for testing your spa integration:
                print(f"  {field_name}: {field_value}")
 
        # Check if zone can publish updates
-       if hasattr(zone, '_state_manager') and zone._state_manager:
+       if zone._publish_callback is not None:
            print("  ✓ Can publish desired state updates")
        else:
            print("  ❌ Cannot publish desired state updates")

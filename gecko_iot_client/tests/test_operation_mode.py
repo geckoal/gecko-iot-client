@@ -207,10 +207,9 @@ class TestOperationModeEvents(unittest.TestCase):
 
     def test_operation_mode_update_event_channel_exists(self):
         """Test that OPERATION_MODE_UPDATE event channel exists."""
-        self.assertTrue(hasattr(EventChannel, "OPERATION_MODE_UPDATE"))
-        self.assertEqual(
-            EventChannel.OPERATION_MODE_UPDATE.value, "operation_mode_update"
-        )
+        # Access the enum member directly — will raise AttributeError if missing
+        channel = EventChannel.OPERATION_MODE_UPDATE
+        self.assertEqual(channel.value, "operation_mode_update")
 
     def test_event_emitter_with_operation_mode_updates(self):
         """Test EventEmitter with operation mode update events."""

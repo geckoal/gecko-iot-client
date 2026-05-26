@@ -110,11 +110,10 @@ class GeckoIotClient:
             },
         ]
 
-        # Set up connectivity monitoring if supported by transporter
-        if hasattr(self.transporter, "on_connectivity_change"):
-            self.transporter.on_connectivity_change(
-                self._on_transporter_connectivity_change
-            )
+        # Set up connectivity monitoring (defined on AbstractTransporter interface)
+        self.transporter.on_connectivity_change(
+            self._on_transporter_connectivity_change
+        )
 
     def connect(self):
         """
