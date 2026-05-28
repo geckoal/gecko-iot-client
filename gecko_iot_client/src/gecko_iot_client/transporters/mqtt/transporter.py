@@ -232,7 +232,10 @@ class MqttTransporter(AbstractTransporter):
 
             except TimeoutError:
                 self._config_future = None
-                last_error = TimeoutError()
+                last_error = TimeoutError(
+                    f"Timed out waiting for configuration response on attempt "
+                    f"{attempt}/{max_attempts} after {per_attempt_timeout:.1f}s"
+                )
                 if attempt < max_attempts:
                     logger.warning(
                         f"Configuration request timed out (attempt {attempt}/{max_attempts}), retrying..."
