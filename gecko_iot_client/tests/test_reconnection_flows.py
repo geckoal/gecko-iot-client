@@ -16,7 +16,7 @@ import time
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 # Add src to path for direct imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -125,9 +125,7 @@ class TestScheduleReconnect(unittest.TestCase):
             handler.on_attempt()
 
         with patch("time.sleep"):
-            with patch.object(
-                self.transporter, "_handle_token_refresh"
-            ) as mock_refresh:
+            with patch.object(self.transporter, "_handle_token_refresh"):
                 self.transporter._schedule_reconnect()
                 # Should reset handler and schedule delayed refresh
                 self.assertEqual(handler.attempts, 0)
