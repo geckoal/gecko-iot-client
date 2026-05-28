@@ -80,6 +80,7 @@ class MqttTransporter(AbstractTransporter):
 
         # State management
         self._is_refreshing_token = False
+        self._is_reconnecting = False
         self._state_lock = threading.RLock()
 
         # Loading state
@@ -140,9 +141,10 @@ class MqttTransporter(AbstractTransporter):
         # Disconnect MQTT client
         self._mqtt_client.disconnect()
 
-        # Clear subscription state
+        # Clear subscription and reconnection state
         with self._state_lock:
             self._subscriptions_setup = False
+            self._is_reconnecting = False
 
         logger.info("Transporter disconnected successfully")
 
@@ -189,35 +191,62 @@ class MqttTransporter(AbstractTransporter):
 
         logger.debug(f"Loading configuration for monitor_id: {self._monitor_id}")
 
-        # Create future BEFORE publishing request to avoid race condition
-        # where response arrives before future exists
-        self._config_future = Future()
+        # Retry logic: the first config request may time out if the broker
+        # hasn't fully routed subscriptions yet. A retry typically succeeds
+        # quickly once the connection is fully stabilized.
+        max_attempts = 3
+        per_attempt_timeout = timeout / max_attempts
+        last_error = None
 
-        topic = self._build_topic("config/get")
+        for attempt in range(1, max_attempts + 1):
+            # Create future BEFORE publishing request to avoid race condition
+            # where response arrives before future exists
+            self._config_future = Future()
 
-        try:
-            logger.debug(f"Publishing configuration request to: {topic}")
-            publish_future = self._mqtt_client.publish(topic, "{}")
+            topic = self._build_topic("config/get")
 
-            # Wait for publish to complete
             try:
-                publish_future.result(timeout=5.0)
-                logger.debug("Configuration request published")
+                logger.debug(
+                    f"Publishing configuration request to: {topic} "
+                    f"(attempt {attempt}/{max_attempts})"
+                )
+                publish_future = self._mqtt_client.publish(topic, "{}")
+
+                # Wait for publish to complete
+                try:
+                    publish_future.result(timeout=5.0)
+                    logger.debug("Configuration request published")
+                except Exception as e:
+                    logger.error(f"Failed to publish configuration request: {e}")
+                    raise ConfigurationError(f"Failed to publish config request: {e}")
+
+                logger.debug(
+                    f"Waiting for configuration response "
+                    f"(timeout: {per_attempt_timeout:.1f}s, attempt {attempt}/{max_attempts})"
+                )
+
+                # Wait for response
+                result = self._config_future.result(timeout=per_attempt_timeout)
+                logger.debug("Configuration loaded successfully")
+                return result
+
+            except TimeoutError:
+                self._config_future = None
+                last_error = TimeoutError()
+                if attempt < max_attempts:
+                    logger.warning(
+                        f"Configuration request timed out (attempt {attempt}/{max_attempts}), retrying..."
+                    )
+                else:
+                    logger.error(
+                        f"Configuration loading failed after {max_attempts} attempts"
+                    )
             except Exception as e:
-                logger.error(f"Failed to publish configuration request: {e}")
-                raise ConfigurationError(f"Failed to publish config request: {e}")
+                self._config_future = None
+                logger.error(f"Configuration loading failed: {e}")
+                raise ConfigurationError(f"Configuration loading failed: {e}")
 
-            logger.debug(f"Waiting for configuration response (timeout: {timeout}s)")
-
-            # Wait for response
-            result = self._config_future.result(timeout=timeout)
-            logger.debug("Configuration loaded successfully")
-            return result
-
-        except Exception as e:
-            self._config_future = None
-            logger.error(f"Configuration loading failed: {e}")
-            raise ConfigurationError(f"Configuration loading failed: {e}")
+        raise ConfigurationError(f"Configuration loading failed: {last_error}")
 
     def load_state(self):
         """Load state from AWS IoT shadow."""
@@ -542,6 +571,13 @@ class MqttTransporter(AbstractTransporter):
 
     def _schedule_reconnect(self):
         """Schedule reconnection with exponential backoff."""
+        # Prevent concurrent reconnection cycles
+        with self._state_lock:
+            if self._is_reconnecting:
+                logger.debug("Reconnection already in progress, skipping")
+                return
+            self._is_reconnecting = True
+
         if not self._reconnection_handler.should_attempt():
             logger.warning(
                 "Max reconnection attempts reached, will retry after cooldown period. "
@@ -549,6 +585,9 @@ class MqttTransporter(AbstractTransporter):
             )
             # Reset counter and try token refresh if available
             self._reconnection_handler.on_success()
+
+            with self._state_lock:
+                self._is_reconnecting = False
 
             if self._token_refresh_callback:
                 # Force a token refresh after cooldown
@@ -569,22 +608,30 @@ class MqttTransporter(AbstractTransporter):
 
         def delayed_reconnect():
             time.sleep(delay)
-            if not self._monitor_stop_event.is_set():
-                try:
-                    client_id = f"ha-{self._monitor_id}-{uuid.uuid4().hex}"
-                    self._mqtt_client.connect(
-                        broker_url=self._broker_url, client_id=client_id
-                    )
-                    logger.debug("Reconnection successful")
-                    self._reconnection_handler.on_success()
+            if self._monitor_stop_event.is_set():
+                with self._state_lock:
+                    self._is_reconnecting = False
+                return
+            try:
+                client_id = f"ha-{self._monitor_id}-{uuid.uuid4().hex}"
+                self._mqtt_client.connect(
+                    broker_url=self._broker_url, client_id=client_id
+                )
+                logger.debug("Reconnection successful")
+                self._reconnection_handler.on_success()
+                with self._state_lock:
+                    self._is_reconnecting = False
 
-                    # Clear subscription state to force re-setup
-                    with self._state_lock:
-                        self._subscriptions_setup = False
+                # Clear subscription state to force re-setup
+                with self._state_lock:
+                    self._subscriptions_setup = False
 
-                except Exception as e:
-                    logger.error(f"Reconnection attempt {attempt_num} failed: {e}")
-                    self._schedule_reconnect()
+            except Exception as e:
+                logger.error(f"Reconnection attempt {attempt_num} failed: {e}")
+                # Release the flag before scheduling next attempt
+                with self._state_lock:
+                    self._is_reconnecting = False
+                self._schedule_reconnect()
 
         reconnect_thread = threading.Thread(target=delayed_reconnect, daemon=True)
         reconnect_thread.start()
@@ -643,10 +690,12 @@ class MqttTransporter(AbstractTransporter):
             # Check if we should attempt reconnection
             with self._state_lock:
                 is_refreshing = self._is_refreshing_token
+                is_reconnecting = self._is_reconnecting
 
-            # Only schedule reconnect if not already refreshing and we have a callback
+            # Only schedule reconnect if not already refreshing/reconnecting
             if (
                 not is_refreshing
+                and not is_reconnecting
                 and self._token_refresh_callback
                 and not self._monitor_stop_event.is_set()
             ):
@@ -664,6 +713,11 @@ class MqttTransporter(AbstractTransporter):
             # Suppress disconnection callbacks during token refresh
             if is_refreshing:
                 logger.debug("Suppressing disconnection callback during token refresh")
+                return
+
+            # Suppress repeated disconnection callbacks during reconnection
+            if is_reconnecting:
+                logger.debug("Suppressing disconnection callback during reconnection")
                 return
 
         # Notify connectivity callbacks
