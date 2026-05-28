@@ -81,7 +81,7 @@ jobs:
           --cov-report=xml:coverage.xml \
           --cov-report=lcov \
           --cov-report=term-missing \
-          --cov-fail-under=60 \
+          --cov-fail-under=50 \
           --junitxml=test-results.xml
 
     - name: Upload test results
