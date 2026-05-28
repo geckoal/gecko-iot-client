@@ -155,6 +155,10 @@ class AbstractZone:
         """
         Update zone from configuration data (structure, limits, capabilities).
 
+        Only instance attributes (set in __init__) are updatable. Class-level defaults
+        and properties are not matched. Subclasses must assign all updatable fields
+        as instance attributes in their __init__.
+
         Args:
             config: Configuration dictionary with zone setup values
         """
@@ -167,6 +171,10 @@ class AbstractZone:
     def update_from_state(self, state: Dict[str, Any]) -> None:
         """
         Update zone from runtime state data.
+
+        Only instance attributes (set in __init__) are updatable. Class-level defaults
+        and properties are not matched. Subclasses must assign all updatable fields
+        as instance attributes in their __init__.
 
         Args:
             state: State dictionary with current values

@@ -95,6 +95,9 @@ class MqttTransporter(AbstractTransporter):
         # Track consecutive refresh failures for progressive backoff
         self._consecutive_refresh_failures = 0
 
+        # Track pending refresh retry thread to prevent unbounded spawning
+        self._pending_refresh_retry: Optional[threading.Thread] = None
+
     # ========================================================================
     # AbstractTransporter Interface
     # ========================================================================
@@ -195,7 +198,7 @@ class MqttTransporter(AbstractTransporter):
         # hasn't fully routed subscriptions yet. A retry typically succeeds
         # quickly once the connection is fully stabilized.
         max_attempts = 3
-        per_attempt_timeout = timeout / max_attempts
+        per_attempt_timeout = timeout
         last_error = None
 
         for attempt in range(1, max_attempts + 1):
@@ -330,17 +333,23 @@ class MqttTransporter(AbstractTransporter):
             if new_broker_url:
                 self._broker_url = new_broker_url
                 self._token_manager.update_broker_url(new_broker_url)
-                self._consecutive_refresh_failures = 0
+                with self._state_lock:
+                    self._consecutive_refresh_failures = 0
                 logger.debug("Token refreshed successfully before connection")
             else:
-                self._consecutive_refresh_failures += 1
+                with self._state_lock:
+                    self._consecutive_refresh_failures += 1
                 logger.error(
                     "Token refresh callback returned None before connection - "
                     "API may be unavailable"
                 )
+                # Schedule a retry so the monitor loop doesn't get stuck
+                self._schedule_refresh_retry()
         except Exception as e:
-            self._consecutive_refresh_failures += 1
+            with self._state_lock:
+                self._consecutive_refresh_failures += 1
             logger.error(f"Failed to refresh expired token before connection: {e}")
+            self._schedule_refresh_retry()
 
     def _setup_subscriptions(self):
         """Setup essential AWS IoT subscriptions."""
@@ -421,10 +430,11 @@ class MqttTransporter(AbstractTransporter):
                 # another refresh here; _schedule_refresh_retry handles the backoff
                 with self._state_lock:
                     already_refreshing = self._is_refreshing_token
+                    has_failures = self._consecutive_refresh_failures > 0
 
                 if (
                     not already_refreshing
-                    and self._consecutive_refresh_failures == 0
+                    and not has_failures
                     and self._should_refresh_token()
                 ):
                     logger.info("Token approaching expiry, initiating refresh...")
@@ -469,11 +479,13 @@ class MqttTransporter(AbstractTransporter):
 
             # Handle callback returning None (API unavailable/failure)
             if not new_broker_url:
-                self._consecutive_refresh_failures += 1
+                with self._state_lock:
+                    self._consecutive_refresh_failures += 1
+                    failure_count = self._consecutive_refresh_failures
                 logger.warning(
                     "Token refresh callback returned None (attempt %d) - "
                     "API may be unavailable, will retry with backoff",
-                    self._consecutive_refresh_failures,
+                    failure_count,
                 )
                 with self._state_lock:
                     self._is_refreshing_token = False
@@ -481,7 +493,8 @@ class MqttTransporter(AbstractTransporter):
                 return
 
             # Successful refresh - reset failure counter
-            self._consecutive_refresh_failures = 0
+            with self._state_lock:
+                self._consecutive_refresh_failures = 0
 
             # Update broker URL and token expiry
             old_broker_url = self._broker_url
@@ -533,8 +546,8 @@ class MqttTransporter(AbstractTransporter):
 
         except Exception as e:
             logger.error(f"Token refresh failed: {e}")
-            self._consecutive_refresh_failures += 1
             with self._state_lock:
+                self._consecutive_refresh_failures += 1
                 self._is_refreshing_token = False
             self._schedule_refresh_retry()
 
@@ -545,18 +558,29 @@ class MqttTransporter(AbstractTransporter):
         broker URL, this method specifically retries the token refresh callback after a delay.
         Uses progressive backoff based on consecutive failures to avoid hammering the API
         when it's down for maintenance.
+
+        Only one pending retry is allowed at a time — if a retry is already scheduled,
+        this call is a no-op.
         """
+        # Guard against multiple concurrent retry threads
+        if (
+            self._pending_refresh_retry is not None
+            and self._pending_refresh_retry.is_alive()
+        ):
+            logger.debug("Refresh retry already scheduled, skipping duplicate")
+            return
+
         # Progressive backoff: 30s, 60s, 120s, 240s, 300s (max 5 min)
         base_delay = 30.0
         max_delay = 300.0
-        delay = min(
-            base_delay * (2 ** (self._consecutive_refresh_failures - 1)), max_delay
-        )
+        with self._state_lock:
+            failures = self._consecutive_refresh_failures
+        delay = min(base_delay * (2 ** (failures - 1)), max_delay)
 
         logger.info(
             "Scheduling token refresh retry in %.0fs (failure #%d)",
             delay,
-            self._consecutive_refresh_failures,
+            failures,
         )
 
         def delayed_refresh_retry():
@@ -565,11 +589,12 @@ class MqttTransporter(AbstractTransporter):
                 if not self._monitor_stop_event.is_set():
                     logger.info(
                         "Retrying token refresh (attempt %d)...",
-                        self._consecutive_refresh_failures + 1,
+                        failures + 1,
                     )
                     self._handle_token_refresh()
 
         retry_thread = threading.Thread(target=delayed_refresh_retry, daemon=True)
+        self._pending_refresh_retry = retry_thread
         retry_thread.start()
 
     def _schedule_reconnect(self):
