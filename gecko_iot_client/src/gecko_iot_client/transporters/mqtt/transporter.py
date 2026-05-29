@@ -536,7 +536,6 @@ class MqttTransporter(AbstractTransporter):
 
             self._mqtt_client.clear_intentional_disconnect_flag()
             logger.debug("Token refreshed with minimal downtime")
-            self._reconnection_handler.on_success()
 
             with self._state_lock:
                 self._is_refreshing_token = False
@@ -600,6 +599,39 @@ class MqttTransporter(AbstractTransporter):
             )
             self._handle_token_refresh()
 
+    def _schedule_token_refresh_then_reconnect(self) -> None:
+        """Refresh the token immediately and reconnect with the fresh URL.
+
+        Called when connection is lost and the token is already expired or expiring.
+        Instead of reconnecting with a stale URL (which will just fail repeatedly),
+        this refreshes the token first so the reconnection uses a valid broker URL.
+        """
+        refresh_thread = threading.Thread(
+            target=self._do_token_refresh_then_reconnect,
+            daemon=True,
+        )
+        refresh_thread.start()
+
+    def _do_token_refresh_then_reconnect(self) -> None:
+        """Refresh token and reconnect (runs in background thread)."""
+        if self._monitor_stop_event.is_set():
+            return
+
+        # Brief delay to let the disconnect settle
+        time.sleep(1.0)
+
+        if self._monitor_stop_event.is_set():
+            return
+
+        # Guard against concurrent refresh attempts (e.g., rapid disconnect events)
+        with self._state_lock:
+            if self._is_refreshing_token:
+                logger.debug("Token refresh already in progress, skipping duplicate")
+                return
+
+        logger.info("Refreshing token after disconnect...")
+        self._handle_token_refresh()
+
     def _schedule_reconnect(self):
         """Schedule reconnection with exponential backoff."""
         # Prevent concurrent reconnection cycles
@@ -645,7 +677,7 @@ class MqttTransporter(AbstractTransporter):
 
     def _delayed_cooldown_refresh(self) -> None:
         """Wait for cooldown period then force a token refresh (runs in background)."""
-        time.sleep(300)  # 5 minute cooldown
+        self._monitor_stop_event.wait(300)  # Interruptible 5 minute cooldown
         if not self._monitor_stop_event.is_set():
             logger.info("Cooldown period ended, forcing token refresh")
             self._handle_token_refresh()
@@ -680,15 +712,12 @@ class MqttTransporter(AbstractTransporter):
         """Handle MQTT connection status changes."""
         logger.debug(f"MQTT connection status changed: {connected}")
 
-        with self._state_lock:
-            is_refreshing = self._is_refreshing_token
-
         if connected:
-            self._handle_connection_established(is_refreshing)
+            self._handle_connection_established()
         else:
-            self._handle_connection_lost(is_refreshing)
+            self._handle_connection_lost()
 
-    def _handle_connection_established(self, is_refreshing: bool) -> None:
+    def _handle_connection_established(self) -> None:
         """Handle successful MQTT connection event."""
         self._reconnection_handler.on_success()
 
@@ -697,6 +726,9 @@ class MqttTransporter(AbstractTransporter):
             target=self._setup_after_connection, daemon=True
         )
         setup_thread.start()
+
+        with self._state_lock:
+            is_refreshing = self._is_refreshing_token
 
         if is_refreshing:
             logger.debug("Suppressing connectivity callback during token refresh")
@@ -723,7 +755,7 @@ class MqttTransporter(AbstractTransporter):
         except Exception as e:
             logger.error(f"Failed to setup subscriptions after connection: {e}")
 
-    def _handle_connection_lost(self, is_refreshing: bool) -> None:
+    def _handle_connection_lost(self) -> None:
         """Handle MQTT disconnection event."""
         with self._state_lock:
             is_refreshing = self._is_refreshing_token
@@ -739,11 +771,15 @@ class MqttTransporter(AbstractTransporter):
             if self._token_manager.is_expired() or self._token_manager.should_refresh(
                 False
             ):
-                logger.info("Token expired/expiring, will refresh on reconnect")
+                logger.info(
+                    "Token expired/expiring on disconnect, refreshing token before reconnect"
+                )
                 self._token_manager.force_expiry()
-
-            logger.info("Unexpected disconnection, scheduling reconnection...")
-            self._schedule_reconnect()
+                # Refresh the token first so reconnection uses a valid URL
+                self._schedule_token_refresh_then_reconnect()
+            else:
+                logger.info("Unexpected disconnection, scheduling reconnection...")
+                self._schedule_reconnect()
 
         # Suppress callbacks during refresh or reconnection
         if is_refreshing:

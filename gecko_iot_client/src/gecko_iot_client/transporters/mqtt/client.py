@@ -164,30 +164,6 @@ class MqttClient:
                 self._connected = False
                 self._client = None
 
-    def stop_for_refresh(self) -> None:
-        """
-        Stop client for token refresh (intentional disconnect).
-
-        This is different from disconnect() as it's specifically for
-        token refresh scenarios and clears the intentional flag after.
-        """
-        with self._lock:
-            if not self._client:
-                return
-            self._intentional_disconnect = True
-            client = self._client
-
-        try:
-            logger.debug("Stopping MQTT client for token refresh")
-            client.stop()
-
-            with self._lock:
-                self._client = None
-                self._connected = False
-
-        except Exception as e:
-            logger.warning(f"Error stopping client for refresh: {e}")
-
     def publish(
         self, topic: str, payload: str, timeout: float = PUBLISH_TIMEOUT
     ) -> Future:
