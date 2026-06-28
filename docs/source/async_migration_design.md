@@ -1,9 +1,9 @@
 # Async Migration Design Document
 
-## Status: Planning (Implementation Deferred)
+## Status: Phase 1 & 2 Implemented
 
 **Author**: Gecko IoT Team
-**Date**: 2025
+**Date**: 2025 (Implemented June 2026)
 **Validates**: NFR-3, NFR-9
 
 ---

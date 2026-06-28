@@ -1,7 +1,9 @@
 import logging
+from collections.abc import Coroutine
 from typing import Any, Callable, Dict, List
 
 from .api import GeckoApiClient
+from .async_adapter import AsyncCallbackAdapter, EventLoopAdapter
 from .models.connectivity import ConnectivityStatus
 from .models.events import EventChannel, EventEmitter
 from .models.operation_mode import OperationMode, OperationModeStatus
@@ -34,6 +36,8 @@ __all__ = [
     "OperationModeStatus",
     "OperationModeController",
     "GeckoApiClient",
+    "AsyncCallbackAdapter",
+    "EventLoopAdapter",
 ]
 
 # Get version from setuptools-scm
@@ -76,7 +80,12 @@ class GeckoIotClient:
     """
 
     def __init__(
-        self, idd: str, transporter: AbstractTransporter, config_timeout: float = 5.0
+        self,
+        idd: str,
+        transporter: AbstractTransporter,
+        config_timeout: float = 5.0,
+        *,
+        async_adapter: AsyncCallbackAdapter | None = None,
     ):
         self.id = idd
         self.transporter = transporter
@@ -87,8 +96,11 @@ class GeckoIotClient:
         self._configuration = None
         self._state = None
 
+        # Async adapter for dispatching callbacks to consumer event loop
+        self._async_adapter = async_adapter
+
         # Event system
-        self._event_emitter = EventEmitter()
+        self._event_emitter = EventEmitter(async_adapter=async_adapter)
         self._connectivity_status = ConnectivityStatus()
         self._operation_mode_controller = OperationModeController()
 
@@ -270,6 +282,54 @@ class GeckoIotClient:
             callback: The callback function to remove
         """
         self._event_emitter.off(channel, callback)
+
+    def on_async(
+        self,
+        channel: EventChannel,
+        callback: Callable[..., Coroutine[Any, Any, None]],
+    ) -> None:
+        """
+        Register an async callback (coroutine function) for an event channel.
+
+        The callback will be scheduled on the consumer's event loop via the
+        AsyncCallbackAdapter. Requires an async_adapter to be set at init.
+
+        Args:
+            channel: Event channel to listen to.
+            callback: Async callable (coroutine function).
+
+        Raises:
+            RuntimeError: If no AsyncCallbackAdapter was provided at init.
+        """
+        self._event_emitter.on_async(channel, callback)
+
+    def off_async(
+        self,
+        channel: EventChannel,
+        callback: Callable[..., Coroutine[Any, Any, None]],
+    ) -> None:
+        """
+        Unregister an async callback from an event channel.
+
+        Args:
+            channel: Event channel to stop listening to.
+            callback: The async callback to remove.
+        """
+        self._event_emitter.off_async(channel, callback)
+
+    def on_zone_update_async(
+        self,
+        callback: Callable[[Dict[ZoneType, List[AbstractZone]]], Coroutine[Any, Any, None]],
+    ) -> None:
+        """
+        Register an async callback for zone updates.
+
+        Convenience method wrapping on_async(EventChannel.ZONE_UPDATE, callback).
+
+        Args:
+            callback: Async function receiving the zones dict.
+        """
+        self.on_async(EventChannel.ZONE_UPDATE, callback)
 
     def _on_configuration_loaded(self, configuration):
         """
