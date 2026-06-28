@@ -196,3 +196,6 @@ secrets.json
 # AI tooling
 .kiro/
 .claude/
+
+# Internal reference docs (not part of source)
+gecko_iot_client/docs/architecture.md
