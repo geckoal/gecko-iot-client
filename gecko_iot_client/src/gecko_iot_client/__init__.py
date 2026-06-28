@@ -491,3 +491,98 @@ class GeckoIotClient:
                 }
                 zones_info.append(zone_info)
         return zones_info
+
+    # --- Public Diagnostics API (v1.1.0) ---
+
+    @property
+    def has_configuration(self) -> bool:
+        """
+        Check whether the device configuration has been loaded.
+
+        Returns:
+            bool: True if configuration has been received from the device, False otherwise.
+        """
+        return self._configuration is not None
+
+    @property
+    def has_state(self) -> bool:
+        """
+        Check whether the device state has been loaded.
+
+        Returns:
+            bool: True if state data has been received from the device, False otherwise.
+        """
+        return self._state is not None
+
+    @property
+    def zone_counts(self) -> Dict[str, int]:
+        """
+        Get the number of zones by type.
+
+        Returns a dictionary mapping zone type names to the count of zones
+        of that type. Returns an empty dictionary if no zones have been parsed.
+
+        Returns:
+            Dict[str, int]: Mapping of zone type value strings to zone counts.
+
+        Example:
+            >>> client.zone_counts
+            {"temperature_control": 1, "flow": 3, "lighting": 2}
+        """
+        if not self._zones:
+            return {}
+        return {
+            zone_type.value: len(zones)
+            for zone_type, zones in self._zones.items()
+        }
+
+    def get_diagnostics(self) -> Dict[str, Any]:
+        """
+        Return diagnostic information for external consumers.
+
+        Provides a structured snapshot of the client's current state suitable
+        for troubleshooting and integration diagnostics. This is the public API
+        for diagnostic data — external consumers should use this method instead
+        of accessing private attributes directly.
+
+        Returns:
+            Dict[str, Any]: Diagnostic information including:
+                - client_id: The client identifier
+                - is_connected: Whether the client is fully connected
+                - has_configuration: Whether device configuration is loaded
+                - has_state: Whether device state is loaded
+                - zone_counts: Mapping of zone type to count
+                - connectivity: Transport and device connectivity details (if available)
+                - transporter: Transport layer details (if available)
+
+        Example:
+            >>> diag = client.get_diagnostics()
+            >>> diag["is_connected"]
+            True
+            >>> diag["zone_counts"]
+            {"temperature_control": 1, "flow": 3}
+        """
+        diag: Dict[str, Any] = {
+            "client_id": self.id,
+            "is_connected": self.is_connected,
+            "has_configuration": self.has_configuration,
+            "has_state": self.has_state,
+            "zone_counts": self.zone_counts,
+        }
+
+        if self.connectivity_status:
+            cs = self.connectivity_status
+            diag["connectivity"] = {
+                "transport_connected": cs.transport_connected,
+                "gateway_status": str(cs.gateway_status),
+                "vessel_status": str(cs.vessel_status),
+                "is_fully_connected": cs.is_fully_connected,
+            }
+
+        if self.transporter:
+            diag["transporter"] = {
+                "type": type(self.transporter).__name__,
+                "monitor_id": getattr(self.transporter, "monitor_id", None),
+            }
+
+        return diag
