@@ -16,9 +16,6 @@ class ZoneType(Enum):
 class AbstractZone:
     """Base zone class with change callback functionality"""
 
-    # Callback function for publishing desired state updates
-    _publish_callback: Optional[Callable[[str, str, Dict[str, Any]], None]] = None
-
     def __init__(
         self, id: str, zone_type: ZoneType, config: Any, name: Optional[str] = None
     ):
@@ -35,6 +32,7 @@ class AbstractZone:
         self.name = name
         self.zone_type = zone_type
         self.config = config
+        self._publish_callback: Optional[Callable[[str, str, Dict[str, Any]], None]] = None
 
     def set_publish_callback(
         self, callback: Callable[[str, str, Dict[str, Any]], None]
