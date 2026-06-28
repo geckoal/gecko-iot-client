@@ -1,10 +1,9 @@
+from abc import ABC, abstractmethod
 from concurrent.futures import Future
-from typing import Any, Dict
-
-_NOT_IMPLEMENTED_MSG = "Subclasses must implement this method"
+from typing import Any, Callable, Dict
 
 
-class AbstractTransporter:
+class AbstractTransporter(ABC):
     """
     Abstract base class for transport layer implementations.
 
@@ -14,119 +13,93 @@ class AbstractTransporter:
     for the client.
     """
 
-    def connect(self):
-        """
-        Establish connection to the transport medium.
+    @abstractmethod
+    def connect(self, **kwargs) -> None:
+        """Establish connection to the transport medium."""
+        ...
 
-        Raises:
-            NotImplementedError: Must be implemented by subclasses
-        """
-        raise NotImplementedError(_NOT_IMPLEMENTED_MSG)
+    @abstractmethod
+    def disconnect(self) -> None:
+        """Close connection and clean up resources."""
+        ...
 
-    def disconnect(self):
-        """
-        Close connection and clean up resources.
-
-        Raises:
-            NotImplementedError: Must be implemented by subclasses
-        """
-        raise NotImplementedError(_NOT_IMPLEMENTED_MSG)
-
-    def on_state_change(self, callback):
+    @abstractmethod
+    def on_state_change(self, callback: Callable) -> None:
         """
         Register callback for state change notifications.
 
         Args:
             callback: Function to call when state changes occur
-
-        Raises:
-            NotImplementedError: Must be implemented by subclasses
         """
-        raise NotImplementedError(_NOT_IMPLEMENTED_MSG)
+        ...
 
-    def change_state(self, new_state):
+    @abstractmethod
+    def change_state(self, new_state: Any) -> None:
         """
         Request a state change on the device.
 
         Args:
             new_state: The new state to apply
-
-        Raises:
-            NotImplementedError: Must be implemented by subclasses
         """
-        raise NotImplementedError(_NOT_IMPLEMENTED_MSG)
+        ...
 
-    def load_configuration(self, timeout: float = 30.0):
+    @abstractmethod
+    def load_configuration(self, timeout: float = 30.0) -> Any:
         """
         Load device configuration from the transport medium.
 
         Args:
             timeout: Maximum time to wait for configuration response in seconds
-
-        Raises:
-            NotImplementedError: Must be implemented by subclasses
         """
-        raise NotImplementedError(_NOT_IMPLEMENTED_MSG)
+        ...
 
-    def on_configuration_loaded(self, callback):
+    @abstractmethod
+    def on_configuration_loaded(self, callback: Callable) -> None:
         """
         Register callback for configuration load events.
 
         Args:
             callback: Function to call when configuration is loaded
-
-        Raises:
-            NotImplementedError: Must be implemented by subclasses
         """
-        raise NotImplementedError(_NOT_IMPLEMENTED_MSG)
+        ...
 
-    def load_state(self):
-        """
-        Load current device state from the transport medium.
+    @abstractmethod
+    def load_state(self) -> None:
+        """Load current device state from the transport medium."""
+        ...
 
-        Raises:
-            NotImplementedError: Must be implemented by subclasses
-        """
-        raise NotImplementedError(_NOT_IMPLEMENTED_MSG)
-
-    def on_state_loaded(self, callback):
+    @abstractmethod
+    def on_state_loaded(self, callback: Callable) -> None:
         """
         Register callback for state load events.
 
         Args:
             callback: Function to call when state is loaded
-
-        Raises:
-            NotImplementedError: Must be implemented by subclasses
         """
-        raise NotImplementedError(_NOT_IMPLEMENTED_MSG)
+        ...
 
-    def on_connectivity_change(self, callback):
+    @abstractmethod
+    def on_connectivity_change(self, callback: Callable[[bool], None]) -> None:
         """
         Register callback for connectivity changes.
 
         Args:
             callback: Function to call when connectivity status changes.
                      Callback should accept a boolean (True=connected, False=disconnected).
-
-        Raises:
-            NotImplementedError: Must be implemented by subclasses
         """
-        raise NotImplementedError(_NOT_IMPLEMENTED_MSG)
+        ...
 
+    @abstractmethod
     def is_connected(self) -> bool:
         """
         Check if the transport is currently connected.
 
         Returns:
             bool: True if connected, False otherwise
-
-        Raises:
-            NotImplementedError: Must be implemented by subclasses
         """
-        raise NotImplementedError(_NOT_IMPLEMENTED_MSG)
+        ...
 
-    # Generic desired state interface
+    @abstractmethod
     def publish_desired_state(self, desired_state: Dict[str, Any]) -> Future:
         """
         Publish desired state updates to the transport medium.
@@ -143,8 +116,9 @@ class AbstractTransporter:
             This method is transport-agnostic and doesn't impose any business
             logic about zones, features, or other domain concepts.
         """
-        raise NotImplementedError(_NOT_IMPLEMENTED_MSG)
+        ...
 
+    @abstractmethod
     def publish_batch_desired_state(
         self, zone_updates: Dict[str, Dict[str, Dict[str, Any]]]
     ) -> Future:
@@ -157,4 +131,4 @@ class AbstractTransporter:
         Returns:
             Future that resolves when batch update is published
         """
-        raise NotImplementedError(_NOT_IMPLEMENTED_MSG)
+        ...
