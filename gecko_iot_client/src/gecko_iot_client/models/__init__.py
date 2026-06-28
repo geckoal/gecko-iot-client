@@ -3,7 +3,7 @@
 from .connectivity import ConnectivityStatus
 from .events import EventChannel, EventEmitter
 from .flow_zone import FlowZoneCapabilities, FlowZonePreset
-from .operation_mode import OperationMode, OperationModeStatus
+from .operation_mode import OperationMode
 from .zone_parser import ZoneConfigurationParser
 from .zone_types import (
     RGB,
@@ -34,5 +34,4 @@ __all__ = [
     "EventEmitter",
     "ConnectivityStatus",
     "OperationMode",
-    "OperationModeStatus",
 ]

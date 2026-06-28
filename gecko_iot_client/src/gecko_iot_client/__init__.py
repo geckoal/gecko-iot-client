@@ -6,7 +6,7 @@ from .api import GeckoApiClient
 from .async_adapter import AsyncCallbackAdapter, EventLoopAdapter
 from .models.connectivity import ConnectivityStatus
 from .models.events import EventChannel, EventEmitter
-from .models.operation_mode import OperationMode, OperationModeStatus
+from .models.operation_mode import OperationMode
 from .models.operation_mode_controller import OperationModeController
 from .models.zone_parser import ZoneConfigurationParser
 from .models.zone_types import (
@@ -33,7 +33,6 @@ __all__ = [
     "EventEmitter",
     "ConnectivityStatus",
     "OperationMode",
-    "OperationModeStatus",
     "OperationModeController",
     "GeckoApiClient",
     "AsyncCallbackAdapter",
@@ -250,16 +249,6 @@ class GeckoIotClient:
 
         Returns:
             OperationModeController: Controller for operation mode functionality
-        """
-        return self._operation_mode_controller
-
-    @property
-    def operation_mode_status(self) -> OperationModeController:
-        """
-        Get current operation mode status (legacy property - use operation_mode_controller instead).
-
-        Returns:
-            OperationModeController: Current operation mode controller
         """
         return self._operation_mode_controller
 
