@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from concurrent.futures import Future
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 
 
 class AbstractTransporter(ABC):
@@ -12,6 +12,11 @@ class AbstractTransporter(ABC):
     handle the protocol-specific details while providing a unified interface
     for the client.
     """
+
+    @property
+    def monitor_id(self) -> Optional[str]:
+        """Device monitor identifier, if applicable to this transport."""
+        return None
 
     @abstractmethod
     def connect(self, **kwargs) -> None:

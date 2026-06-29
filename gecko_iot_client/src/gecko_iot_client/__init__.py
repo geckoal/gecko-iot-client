@@ -631,7 +631,7 @@ class GeckoIotClient:
         if self.transporter:
             diag["transporter"] = {
                 "type": type(self.transporter).__name__,
-                "monitor_id": getattr(self.transporter, "monitor_id", None),
+                "monitor_id": self.transporter.monitor_id,
             }
 
         return diag

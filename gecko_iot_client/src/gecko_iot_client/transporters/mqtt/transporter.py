@@ -123,6 +123,11 @@ class MqttTransporter(AbstractTransporter):
         # Track pending refresh retry thread to prevent unbounded spawning
         self._pending_refresh_retry: Optional[threading.Thread] = None
 
+    @property
+    def monitor_id(self) -> str:
+        """Device monitor identifier."""
+        return self._monitor_id
+
     # ========================================================================
     # AbstractTransporter Interface
     # ========================================================================
