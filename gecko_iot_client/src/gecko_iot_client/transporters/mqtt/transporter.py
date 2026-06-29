@@ -48,6 +48,12 @@ class MqttTransporter(AbstractTransporter):
         monitor_id: str,
         token_refresh_callback: Optional[Callable[[str], Optional[str]]] = None,
         token_refresh_buffer_seconds: int = 300,
+        async_token_refresh_callback: Optional[Callable] = None,
+        async_adapter: Optional[Any] = None,
+        *,
+        mqtt_client: Optional[MqttClient] = None,
+        token_manager: Optional[TokenManager] = None,
+        reconnection_handler: Optional[ReconnectionHandler] = None,
     ):
         """
         Initialize MQTT transporter with Gecko-specific logic.
@@ -58,6 +64,18 @@ class MqttTransporter(AbstractTransporter):
             token_refresh_callback: Function to get new broker URL with fresh token.
                 Should return None if refresh failed (e.g., API unavailable).
             token_refresh_buffer_seconds: Seconds before expiry to refresh token
+            async_token_refresh_callback: Async coroutine function for token refresh.
+                Takes monitor_id (str), returns new broker URL or None.
+                When provided alongside async_adapter, takes precedence over
+                the sync token_refresh_callback.
+            async_adapter: AsyncCallbackAdapter for invoking async callbacks from
+                background threads. Required when using async_token_refresh_callback.
+            mqtt_client: Optional pre-configured MqttClient instance (for testing/DI).
+                If not provided, a default MqttClient is created.
+            token_manager: Optional pre-configured TokenManager instance (for testing/DI).
+                If not provided, a default TokenManager is created from broker_url.
+            reconnection_handler: Optional pre-configured ReconnectionHandler (for testing/DI).
+                If not provided, a default ReconnectionHandler is created.
         """
         if not broker_url or not monitor_id:
             raise ConfigurationError("Both broker_url and monitor_id are required")
@@ -66,17 +84,24 @@ class MqttTransporter(AbstractTransporter):
         self._monitor_id = monitor_id
         self._token_refresh_callback = token_refresh_callback
         self._token_refresh_buffer = token_refresh_buffer_seconds
+        self._async_token_refresh_callback = async_token_refresh_callback
+        self._async_adapter = async_adapter
 
-        # Helper components
-        self._token_manager = TokenManager(broker_url, token_refresh_buffer_seconds)
-        self._reconnection_handler = ReconnectionHandler()
+        # Helper components (accept injected instances or create defaults)
+        self._token_manager = token_manager or TokenManager(
+            broker_url, token_refresh_buffer_seconds
+        )
+        self._reconnection_handler = reconnection_handler or ReconnectionHandler()
         self._callback_registry = CallbackRegistry()
 
         # MQTT client - delegates all MQTT operations
-        self._mqtt_client = MqttClient(
+        self._mqtt_client = mqtt_client or MqttClient(
             on_connected=self._on_mqtt_connected,
             on_message=None,  # We use specific handlers only
         )
+        # If an injected client was provided, wire up the connection callback
+        if mqtt_client is not None:
+            self._mqtt_client._on_connected_callback = self._on_mqtt_connected
 
         # State management
         self._is_refreshing_token = False
@@ -98,6 +123,11 @@ class MqttTransporter(AbstractTransporter):
         # Track pending refresh retry thread to prevent unbounded spawning
         self._pending_refresh_retry: Optional[threading.Thread] = None
 
+    @property
+    def monitor_id(self) -> str:
+        """Device monitor identifier."""
+        return self._monitor_id
+
     # ========================================================================
     # AbstractTransporter Interface
     # ========================================================================
@@ -113,7 +143,7 @@ class MqttTransporter(AbstractTransporter):
         # Check if token is already expired before attempting connection
         if self._token_manager.is_expired():
             logger.warning("Token expired, refreshing before connection")
-            if self._token_refresh_callback:
+            if self._token_refresh_callback or self._async_token_refresh_callback:
                 self._refresh_token_before_connect()
 
         try:
@@ -128,7 +158,9 @@ class MqttTransporter(AbstractTransporter):
             )
 
             # Start expiry monitoring after successful connection
-            if self._token_refresh_callback and self._token_manager.expiry:
+            if (
+                self._token_refresh_callback or self._async_token_refresh_callback
+            ) and self._token_manager.expiry:
                 self._start_expiry_monitoring()
 
         except Exception as e:
@@ -325,11 +357,11 @@ class MqttTransporter(AbstractTransporter):
 
     def _refresh_token_before_connect(self) -> None:
         """Refresh token before initial connection attempt."""
-        if not self._token_refresh_callback:
+        if not self._token_refresh_callback and not self._async_token_refresh_callback:
             return
 
         try:
-            new_broker_url = self._token_refresh_callback(self._monitor_id)
+            new_broker_url = self._invoke_refresh_callback()
             if new_broker_url:
                 self._broker_url = new_broker_url
                 self._token_manager.update_broker_url(new_broker_url)
@@ -453,7 +485,7 @@ class MqttTransporter(AbstractTransporter):
 
     def _handle_token_refresh(self):
         """Handle token refresh and reconnection."""
-        if not self._token_refresh_callback:
+        if not self._token_refresh_callback and not self._async_token_refresh_callback:
             logger.warning("No token refresh callback configured")
             return
 
@@ -482,16 +514,47 @@ class MqttTransporter(AbstractTransporter):
         expiry = self._token_manager.expiry
         if expiry:
             time_to_expiry = (expiry - datetime.now()).total_seconds()
-            logger.info(f"Refreshing token ({time_to_expiry:.1f}s until expiry)...")
+            logger.info(
+                "Refreshing token (%.1fs until expiry)...",
+                time_to_expiry,
+                extra={"monitor_id": self._monitor_id, "time_to_expiry": time_to_expiry},
+            )
         else:
-            logger.info("Refreshing token...")
+            logger.info(
+                "Refreshing token...",
+                extra={"monitor_id": self._monitor_id},
+            )
 
     def _invoke_refresh_callback(self) -> Optional[str]:
-        """Invoke the token refresh callback and log duration."""
+        """Invoke the token refresh callback and log duration.
+
+        Uses the async callback + adapter path if available, otherwise
+        falls back to the sync callback.
+        """
         callback_start = datetime.now()
-        new_broker_url = self._token_refresh_callback(self._monitor_id)
+
+        # Prefer async path when both adapter and async callback are available
+        if (
+            self._async_token_refresh_callback
+            and self._async_adapter
+            and self._async_adapter.is_running()
+        ):
+            coro = self._async_token_refresh_callback(self._monitor_id)
+            new_broker_url = self._async_adapter.schedule_with_result(
+                coro, timeout=30.0
+            )
+        elif self._token_refresh_callback:
+            new_broker_url = self._token_refresh_callback(self._monitor_id)
+        else:
+            logger.warning("No token refresh callback configured")
+            return None
+
         callback_duration = (datetime.now() - callback_start).total_seconds()
-        logger.debug(f"Token refresh callback completed in {callback_duration:.1f}s")
+        logger.debug(
+            "Token refresh callback completed in %.1fs",
+            callback_duration,
+            extra={"monitor_id": self._monitor_id, "duration_s": callback_duration},
+        )
         return new_broker_url
 
     def _handle_refresh_callback_failure(self) -> None:
@@ -577,6 +640,11 @@ class MqttTransporter(AbstractTransporter):
             "Scheduling token refresh retry in %.0fs (failure #%d)",
             delay,
             failures,
+            extra={
+                "monitor_id": self._monitor_id,
+                "retry_delay_s": delay,
+                "failure_count": failures,
+            },
         )
 
         retry_thread = threading.Thread(
@@ -671,7 +739,16 @@ class MqttTransporter(AbstractTransporter):
         delay = self._reconnection_handler.get_delay()
         attempt_num = self._reconnection_handler.on_attempt()
 
-        logger.debug(f"Scheduling reconnection attempt {attempt_num} in {delay}s")
+        logger.debug(
+            "Scheduling reconnection attempt %d in %ss",
+            attempt_num,
+            delay,
+            extra={
+                "monitor_id": self._monitor_id,
+                "attempt": attempt_num,
+                "delay_s": delay,
+            },
+        )
 
         reconnect_thread = threading.Thread(
             target=self._delayed_reconnect,
@@ -691,7 +768,7 @@ class MqttTransporter(AbstractTransporter):
         with self._state_lock:
             self._is_reconnecting = False
 
-        if self._token_refresh_callback:
+        if self._token_refresh_callback or self._async_token_refresh_callback:
             cooldown_thread = threading.Thread(
                 target=self._delayed_cooldown_refresh,
                 daemon=True,
@@ -744,7 +821,11 @@ class MqttTransporter(AbstractTransporter):
 
     def _on_mqtt_connected(self, connected: bool):
         """Handle MQTT connection status changes."""
-        logger.debug(f"MQTT connection status changed: {connected}")
+        logger.debug(
+            "MQTT connection status changed: %s",
+            connected,
+            extra={"monitor_id": self._monitor_id, "connected": connected},
+        )
 
         if connected:
             self._handle_connection_established()
@@ -803,7 +884,7 @@ class MqttTransporter(AbstractTransporter):
         if (
             not is_refreshing
             and not is_reconnecting
-            and self._token_refresh_callback
+            and (self._token_refresh_callback or self._async_token_refresh_callback)
             and not self._monitor_stop_event.is_set()
         ):
             if self._token_manager.is_expired() or self._token_manager.should_refresh(

@@ -20,7 +20,7 @@ Models Package
    :members:
    :undoc-members:
    :show-inheritance:
-   :exclude-members: AbstractZone, ZoneType, TemperatureControlZone, FlowZone, LightingZone, EventChannel, EventEmitter, ConnectivityStatus, OperationMode, OperationModeStatus
+   :exclude-members: AbstractZone, ZoneType, TemperatureControlZone, FlowZone, LightingZone, EventChannel, EventEmitter, ConnectivityStatus, OperationMode
 
 Zone Types
 ~~~~~~~~~~

@@ -16,9 +16,6 @@ class ZoneType(Enum):
 class AbstractZone:
     """Base zone class with change callback functionality"""
 
-    # Callback function for publishing desired state updates
-    _publish_callback: Optional[Callable[[str, str, Dict[str, Any]], None]] = None
-
     def __init__(
         self, id: str, zone_type: ZoneType, config: Any, name: Optional[str] = None
     ):
@@ -35,6 +32,10 @@ class AbstractZone:
         self.name = name
         self.zone_type = zone_type
         self.config = config
+        self._publish_callback: Optional[Callable[[str, str, Dict[str, Any]], None]] = None
+        self._async_publish_callback: Optional[
+            Callable[[str, str, Dict[str, Any]], Any]
+        ] = None
 
     def set_publish_callback(
         self, callback: Callable[[str, str, Dict[str, Any]], None]
@@ -46,6 +47,18 @@ class AbstractZone:
             callback: Function that takes (zone_type, zone_id, updates) and handles publishing
         """
         self._publish_callback = callback
+
+    def set_async_publish_callback(
+        self, callback: Callable[[str, str, Dict[str, Any]], Any]
+    ) -> None:
+        """
+        Set the async callback function for publishing desired state updates.
+
+        Args:
+            callback: Async function that takes (zone_type, zone_id, updates)
+                     and handles publishing. Should be a coroutine function.
+        """
+        self._async_publish_callback = callback
 
     def _publish_desired_state(self, updates: Dict[str, Any]) -> None:
         """
@@ -60,6 +73,34 @@ class AbstractZone:
                 self._publish_callback(self.zone_type.value, self.id, updates)
             except Exception as e:
                 logger.error(f"Failed to publish desired state for zone {self.id}: {e}")
+        else:
+            logger.warning(
+                f"No publish callback set for zone {self.id} - cannot publish desired state"
+            )
+
+    async def _async_publish_desired_state(self, updates: Dict[str, Any]) -> None:
+        """
+        Publish desired state updates via async callback.
+
+        Falls back to sync callback wrapped in executor if no async callback is set.
+
+        Args:
+            updates: Dictionary of state changes to publish
+        """
+        if self._async_publish_callback:
+            try:
+                await self._async_publish_callback(self.zone_type.value, self.id, updates)
+            except Exception as e:
+                logger.error(
+                    f"Failed to async publish desired state for zone {self.id}: {e}"
+                )
+        elif self._publish_callback:
+            import asyncio
+
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None, self._publish_callback, self.zone_type.value, self.id, updates
+            )
         else:
             logger.warning(
                 f"No publish callback set for zone {self.id} - cannot publish desired state"
@@ -247,46 +288,3 @@ class AbstractZone:
             "zone_type": self.zone_type.value,
             "config": config,
         }
-
-
-# Example usage and utility functions
-def create_zone_logger(zone_name: str) -> Callable[[str, Any, Any], None]:
-    """
-    Create a logging callback for zone changes.
-
-    Args:
-        zone_name: Name of the zone for logging
-
-    Returns:
-        Callback function that logs attribute changes
-    """
-
-    def log_change(attribute: str, old_value: Any, new_value: Any) -> None:
-        print(f"[{zone_name}] {attribute} changed: {old_value} -> {new_value}")
-
-    return log_change
-
-
-def create_validation_callback(
-    attribute: str,
-    validator: Callable[[Any], bool],
-    error_message: str = "Invalid value",
-) -> Callable[[str, Any, Any], None]:
-    """
-    Create a validation callback for specific attributes.
-
-    Args:
-        attribute: Name of the attribute to validate
-        validator: Function that returns True if value is valid
-        error_message: Message to display on validation failure
-
-    Returns:
-        Callback function that validates attribute changes
-    """
-
-    def validate_change(attr: str, old_value: Any, new_value: Any) -> None:
-        if attr == attribute and new_value is not None:
-            if not validator(new_value):
-                print(f"Warning: {error_message} for {attr}: {new_value}")
-
-    return validate_change

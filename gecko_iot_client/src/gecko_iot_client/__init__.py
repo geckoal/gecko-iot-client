@@ -1,10 +1,12 @@
 import logging
+from collections.abc import Coroutine
 from typing import Any, Callable, Dict, List
 
 from .api import GeckoApiClient
+from .async_adapter import AsyncCallbackAdapter, EventLoopAdapter
 from .models.connectivity import ConnectivityStatus
 from .models.events import EventChannel, EventEmitter
-from .models.operation_mode import OperationMode, OperationModeStatus
+from .models.operation_mode import OperationMode
 from .models.operation_mode_controller import OperationModeController
 from .models.zone_parser import ZoneConfigurationParser
 from .models.zone_types import (
@@ -31,9 +33,10 @@ __all__ = [
     "EventEmitter",
     "ConnectivityStatus",
     "OperationMode",
-    "OperationModeStatus",
     "OperationModeController",
     "GeckoApiClient",
+    "AsyncCallbackAdapter",
+    "EventLoopAdapter",
 ]
 
 # Get version from setuptools-scm
@@ -76,7 +79,12 @@ class GeckoIotClient:
     """
 
     def __init__(
-        self, idd: str, transporter: AbstractTransporter, config_timeout: float = 5.0
+        self,
+        idd: str,
+        transporter: AbstractTransporter,
+        config_timeout: float = 5.0,
+        *,
+        async_adapter: AsyncCallbackAdapter | None = None,
     ):
         self.id = idd
         self.transporter = transporter
@@ -87,8 +95,11 @@ class GeckoIotClient:
         self._configuration = None
         self._state = None
 
+        # Async adapter for dispatching callbacks to consumer event loop
+        self._async_adapter = async_adapter
+
         # Event system
-        self._event_emitter = EventEmitter()
+        self._event_emitter = EventEmitter(async_adapter=async_adapter)
         self._connectivity_status = ConnectivityStatus()
         self._operation_mode_controller = OperationModeController()
 
@@ -241,16 +252,6 @@ class GeckoIotClient:
         """
         return self._operation_mode_controller
 
-    @property
-    def operation_mode_status(self) -> OperationModeController:
-        """
-        Get current operation mode status (legacy property - use operation_mode_controller instead).
-
-        Returns:
-            OperationModeController: Current operation mode controller
-        """
-        return self._operation_mode_controller
-
     def on(self, channel: EventChannel, callback: Callable) -> None:
         """
         Register a callback for a specific event channel.
@@ -270,6 +271,54 @@ class GeckoIotClient:
             callback: The callback function to remove
         """
         self._event_emitter.off(channel, callback)
+
+    def on_async(
+        self,
+        channel: EventChannel,
+        callback: Callable[..., Coroutine[Any, Any, None]],
+    ) -> None:
+        """
+        Register an async callback (coroutine function) for an event channel.
+
+        The callback will be scheduled on the consumer's event loop via the
+        AsyncCallbackAdapter. Requires an async_adapter to be set at init.
+
+        Args:
+            channel: Event channel to listen to.
+            callback: Async callable (coroutine function).
+
+        Raises:
+            RuntimeError: If no AsyncCallbackAdapter was provided at init.
+        """
+        self._event_emitter.on_async(channel, callback)
+
+    def off_async(
+        self,
+        channel: EventChannel,
+        callback: Callable[..., Coroutine[Any, Any, None]],
+    ) -> None:
+        """
+        Unregister an async callback from an event channel.
+
+        Args:
+            channel: Event channel to stop listening to.
+            callback: The async callback to remove.
+        """
+        self._event_emitter.off_async(channel, callback)
+
+    def on_zone_update_async(
+        self,
+        callback: Callable[[Dict[ZoneType, List[AbstractZone]]], Coroutine[Any, Any, None]],
+    ) -> None:
+        """
+        Register an async callback for zone updates.
+
+        Convenience method wrapping on_async(EventChannel.ZONE_UPDATE, callback).
+
+        Args:
+            callback: Async function receiving the zones dict.
+        """
+        self.on_async(EventChannel.ZONE_UPDATE, callback)
 
     def _on_configuration_loaded(self, configuration):
         """
@@ -491,3 +540,98 @@ class GeckoIotClient:
                 }
                 zones_info.append(zone_info)
         return zones_info
+
+    # --- Public Diagnostics API (v1.1.0) ---
+
+    @property
+    def has_configuration(self) -> bool:
+        """
+        Check whether the device configuration has been loaded.
+
+        Returns:
+            bool: True if configuration has been received from the device, False otherwise.
+        """
+        return self._configuration is not None
+
+    @property
+    def has_state(self) -> bool:
+        """
+        Check whether the device state has been loaded.
+
+        Returns:
+            bool: True if state data has been received from the device, False otherwise.
+        """
+        return self._state is not None
+
+    @property
+    def zone_counts(self) -> Dict[str, int]:
+        """
+        Get the number of zones by type.
+
+        Returns a dictionary mapping zone type names to the count of zones
+        of that type. Returns an empty dictionary if no zones have been parsed.
+
+        Returns:
+            Dict[str, int]: Mapping of zone type value strings to zone counts.
+
+        Example:
+            >>> client.zone_counts
+            {"temperature_control": 1, "flow": 3, "lighting": 2}
+        """
+        if not self._zones:
+            return {}
+        return {
+            zone_type.value: len(zones)
+            for zone_type, zones in self._zones.items()
+        }
+
+    def get_diagnostics(self) -> Dict[str, Any]:
+        """
+        Return diagnostic information for external consumers.
+
+        Provides a structured snapshot of the client's current state suitable
+        for troubleshooting and integration diagnostics. This is the public API
+        for diagnostic data — external consumers should use this method instead
+        of accessing private attributes directly.
+
+        Returns:
+            Dict[str, Any]: Diagnostic information including:
+                - client_id: The client identifier
+                - is_connected: Whether the client is fully connected
+                - has_configuration: Whether device configuration is loaded
+                - has_state: Whether device state is loaded
+                - zone_counts: Mapping of zone type to count
+                - connectivity: Transport and device connectivity details (if available)
+                - transporter: Transport layer details (if available)
+
+        Example:
+            >>> diag = client.get_diagnostics()
+            >>> diag["is_connected"]
+            True
+            >>> diag["zone_counts"]
+            {"temperature_control": 1, "flow": 3}
+        """
+        diag: Dict[str, Any] = {
+            "client_id": self.id,
+            "is_connected": self.is_connected,
+            "has_configuration": self.has_configuration,
+            "has_state": self.has_state,
+            "zone_counts": self.zone_counts,
+        }
+
+        if self.connectivity_status:
+            cs = self.connectivity_status
+            diag["connectivity"] = {
+                "transport_connected": cs.transport_connected,
+                "gateway_status": str(cs.gateway_status),
+                "vessel_status": str(cs.vessel_status),
+                "is_fully_connected": cs.is_fully_connected,
+            }
+
+        if self.transporter:
+            diag["transporter"] = {
+                "type": type(self.transporter).__name__,
+                "monitor_id": self.transporter.monitor_id,
+            }
+
+        return diag

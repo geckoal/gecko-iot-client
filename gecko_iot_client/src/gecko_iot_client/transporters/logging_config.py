@@ -206,7 +206,7 @@ def setup_mqtt_logging(
         Tuple of (main_logger, event_logger)
     """
     # Convert string level to logging constant
-    level = getattr(logging, log_level.upper(), logging.INFO)
+    level = logging.getLevelNamesMapping().get(log_level.upper(), logging.INFO)
 
     # Create main logger
     mqtt_logger = MqttTransporterLogger(

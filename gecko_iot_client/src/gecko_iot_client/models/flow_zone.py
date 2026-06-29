@@ -107,9 +107,18 @@ class FlowZone(AbstractZone):
             id=zone_id, zone_type=ZoneType.FLOW_ZONE, name=config["name"], config=config
         )
 
+        # Extract speed configuration at init time to avoid re-deriving from raw config
+        speed_value = config.get("speed")
+        self._speed_config: Optional[SpeedConfig] = (
+            speed_value if isinstance(speed_value, dict) else None
+        )
+
+        # Extract flow zone type at init time
+        self._flow_zone_type: FlowZoneType = self._determine_flow_zone_type(config)
+
         # Initialize flow zone specific attributes from config
         self.active: Optional[bool] = config.get("active")
-        self.speed: Optional[float] = config.get("speed")
+        self.speed: Optional[float] = config.get("speed") if not isinstance(speed_value, dict) else None
         self.initiators_: Optional[List[FlowZoneInitiator]] = config.get("initiators_")
 
         # Validate speed if present
@@ -128,10 +137,7 @@ class FlowZone(AbstractZone):
         Returns:
             SpeedConfig dictionary or None if not available
         """
-        speed_value = self.config.get("speed")
-        if isinstance(speed_value, dict):
-            return speed_value  # type: ignore
-        return None
+        return self._speed_config
 
     def _validate_speed(self, speed: float) -> None:
         """
@@ -188,7 +194,7 @@ class FlowZone(AbstractZone):
         Returns:
             FlowZoneType enum value
         """
-        return self._determine_flow_zone_type(self.config)
+        return self._flow_zone_type
 
     @property
     def capabilities(self) -> List[FlowZoneCapabilities]:
@@ -305,3 +311,44 @@ class FlowZone(AbstractZone):
             )
 
         self._publish_desired_state({"active": False})
+
+    # --- Async control methods ---
+
+    async def async_set_speed(self, speed: float, active: Optional[bool] = True) -> None:
+        """
+        Async version of set_speed.
+
+        Args:
+            speed: Speed value to set (percentage)
+            active: Whether to activate the zone (default: True)
+
+        Raises:
+            ValueError: If speed is outside valid range
+        """
+        self._validate_speed(speed)
+        self.speed = speed
+        if active is not None:
+            self.active = active
+        await self._async_publish_desired_state({"speed": speed, "active": self.active})
+
+    async def async_activate(self) -> None:
+        """Async version of activate."""
+        await self._async_publish_desired_state({"active": True})
+
+    async def async_deactivate(self) -> None:
+        """
+        Async version of deactivate.
+
+        Raises:
+            RuntimeError: If zone has active non-user initiators
+        """
+        non_user_initiators = self.initiators_ is not None and any(
+            initiator != FlowZoneInitiator.USER_DEMAND.value
+            for initiator in self.initiators_
+        )
+        if non_user_initiators:
+            raise RuntimeError(
+                "Cannot deactivate flow zone with active non-user initiators."
+            )
+
+        await self._async_publish_desired_state({"active": False})

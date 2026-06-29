@@ -1,4 +1,16 @@
-"""API for Gecko bound to Home Assistant OAuth."""
+"""API for Gecko bound to Home Assistant OAuth.
+
+This module provides the abstract GeckoApiClient which defines the HTTP REST API
+interface for Gecko IoT services. It is included in this library (alongside MQTT
+transport) because consumers typically need both MQTT real-time communication and
+REST API access (e.g., for discovering vessels, fetching livestream URLs).
+
+The `aiohttp` dependency required by this module is declared as a required
+dependency in pyproject.toml.
+
+Subclasses must implement `async_get_access_token()` to provide OAuth2 token
+management (e.g., tied to Home Assistant's config entry token refresh).
+"""
 
 import logging
 from abc import ABC, abstractmethod
