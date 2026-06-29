@@ -208,3 +208,48 @@ class LightingZone(AbstractZone):
     def deactivate(self) -> None:
         """Deactivate this lighting zone."""
         self._publish_desired_state({"active": False})
+
+    # --- Async control methods ---
+
+    async def async_set_color(
+        self, r: int, g: int, b: int, i: Optional[int] = None
+    ) -> None:
+        """
+        Async version of set_color.
+
+        Args:
+            r: Red component (0-255)
+            g: Green component (0-255)
+            b: Blue component (0-255)
+            i: Optional intensity component (0-255)
+
+        Raises:
+            ValueError: If any component is outside the 0-255 range
+        """
+        rgb_color = RGB(r=r, g=g, b=b, i=i)
+        self.rgbi = rgb_color
+        self.active = True
+        await self._async_publish_desired_state({"rgbi": rgb_color, "active": True})
+
+    async def async_set_effect(self, effect_name: str) -> None:
+        """
+        Async version of set_effect.
+
+        Args:
+            effect_name: Name of the effect to set (1-50 characters)
+
+        Raises:
+            ValueError: If effect name is not between 1 and 50 characters
+        """
+        self._validate_effect_name(effect_name)
+        self.effect = effect_name
+        self.active = True
+        await self._async_publish_desired_state({"effect": effect_name, "active": True})
+
+    async def async_activate(self) -> None:
+        """Async version of activate."""
+        await self._async_publish_desired_state({"active": True})
+
+    async def async_deactivate(self) -> None:
+        """Async version of deactivate."""
+        await self._async_publish_desired_state({"active": False})

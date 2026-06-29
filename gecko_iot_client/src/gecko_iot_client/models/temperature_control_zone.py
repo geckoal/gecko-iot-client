@@ -201,6 +201,39 @@ class TemperatureControlZone(AbstractZone):
         self.set_point = temperature
         self._publish_desired_state({"setPoint": temperature})
 
+    async def async_set_target_temperature(self, temperature: float) -> None:
+        """
+        Async version of set_target_temperature.
+
+        Set target temperature with validation against configured limits.
+
+        Args:
+            temperature: Target temperature in Celsius
+
+        Raises:
+            ValueError: If temperature limits not configured or temperature outside range
+        """
+        if (
+            self.min_temperature_set_point_c is None
+            or self.max_temperature_set_point_c is None
+        ):
+            raise ValueError(
+                "Temperature limits not configured - cannot validate set point"
+            )
+
+        if not (
+            self.min_temperature_set_point_c
+            <= temperature
+            <= self.max_temperature_set_point_c
+        ):
+            raise ValueError(
+                f"Set point {temperature}°C is outside configured range "
+                f"({self.min_temperature_set_point_c}°C to {self.max_temperature_set_point_c}°C)"
+            )
+
+        self.set_point = temperature
+        await self._async_publish_desired_state({"setPoint": temperature})
+
     def get_temperature_state(self) -> Dict[str, Any]:
         """
         Get the current temperature state as a simple dictionary.
