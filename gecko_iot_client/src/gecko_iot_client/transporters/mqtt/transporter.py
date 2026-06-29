@@ -50,6 +50,10 @@ class MqttTransporter(AbstractTransporter):
         token_refresh_buffer_seconds: int = 300,
         async_token_refresh_callback: Optional[Callable] = None,
         async_adapter: Optional[Any] = None,
+        *,
+        mqtt_client: Optional[MqttClient] = None,
+        token_manager: Optional[TokenManager] = None,
+        reconnection_handler: Optional[ReconnectionHandler] = None,
     ):
         """
         Initialize MQTT transporter with Gecko-specific logic.
@@ -66,6 +70,12 @@ class MqttTransporter(AbstractTransporter):
                 the sync token_refresh_callback.
             async_adapter: AsyncCallbackAdapter for invoking async callbacks from
                 background threads. Required when using async_token_refresh_callback.
+            mqtt_client: Optional pre-configured MqttClient instance (for testing/DI).
+                If not provided, a default MqttClient is created.
+            token_manager: Optional pre-configured TokenManager instance (for testing/DI).
+                If not provided, a default TokenManager is created from broker_url.
+            reconnection_handler: Optional pre-configured ReconnectionHandler (for testing/DI).
+                If not provided, a default ReconnectionHandler is created.
         """
         if not broker_url or not monitor_id:
             raise ConfigurationError("Both broker_url and monitor_id are required")
@@ -77,16 +87,21 @@ class MqttTransporter(AbstractTransporter):
         self._async_token_refresh_callback = async_token_refresh_callback
         self._async_adapter = async_adapter
 
-        # Helper components
-        self._token_manager = TokenManager(broker_url, token_refresh_buffer_seconds)
-        self._reconnection_handler = ReconnectionHandler()
+        # Helper components (accept injected instances or create defaults)
+        self._token_manager = token_manager or TokenManager(
+            broker_url, token_refresh_buffer_seconds
+        )
+        self._reconnection_handler = reconnection_handler or ReconnectionHandler()
         self._callback_registry = CallbackRegistry()
 
         # MQTT client - delegates all MQTT operations
-        self._mqtt_client = MqttClient(
+        self._mqtt_client = mqtt_client or MqttClient(
             on_connected=self._on_mqtt_connected,
             on_message=None,  # We use specific handlers only
         )
+        # If an injected client was provided, wire up the connection callback
+        if mqtt_client is not None:
+            self._mqtt_client._on_connected_callback = self._on_mqtt_connected
 
         # State management
         self._is_refreshing_token = False
