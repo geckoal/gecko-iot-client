@@ -199,3 +199,4 @@ secrets.json
 
 # Internal reference docs (not part of source)
 gecko_iot_client/docs/architecture.md
+docs/internal/
