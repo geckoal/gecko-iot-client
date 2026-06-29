@@ -509,9 +509,16 @@ class MqttTransporter(AbstractTransporter):
         expiry = self._token_manager.expiry
         if expiry:
             time_to_expiry = (expiry - datetime.now()).total_seconds()
-            logger.info(f"Refreshing token ({time_to_expiry:.1f}s until expiry)...")
+            logger.info(
+                "Refreshing token (%.1fs until expiry)...",
+                time_to_expiry,
+                extra={"monitor_id": self._monitor_id, "time_to_expiry": time_to_expiry},
+            )
         else:
-            logger.info("Refreshing token...")
+            logger.info(
+                "Refreshing token...",
+                extra={"monitor_id": self._monitor_id},
+            )
 
     def _invoke_refresh_callback(self) -> Optional[str]:
         """Invoke the token refresh callback and log duration.
@@ -538,7 +545,11 @@ class MqttTransporter(AbstractTransporter):
             return None
 
         callback_duration = (datetime.now() - callback_start).total_seconds()
-        logger.debug(f"Token refresh callback completed in {callback_duration:.1f}s")
+        logger.debug(
+            "Token refresh callback completed in %.1fs",
+            callback_duration,
+            extra={"monitor_id": self._monitor_id, "duration_s": callback_duration},
+        )
         return new_broker_url
 
     def _handle_refresh_callback_failure(self) -> None:
@@ -624,6 +635,11 @@ class MqttTransporter(AbstractTransporter):
             "Scheduling token refresh retry in %.0fs (failure #%d)",
             delay,
             failures,
+            extra={
+                "monitor_id": self._monitor_id,
+                "retry_delay_s": delay,
+                "failure_count": failures,
+            },
         )
 
         retry_thread = threading.Thread(
@@ -718,7 +734,16 @@ class MqttTransporter(AbstractTransporter):
         delay = self._reconnection_handler.get_delay()
         attempt_num = self._reconnection_handler.on_attempt()
 
-        logger.debug(f"Scheduling reconnection attempt {attempt_num} in {delay}s")
+        logger.debug(
+            "Scheduling reconnection attempt %d in %ss",
+            attempt_num,
+            delay,
+            extra={
+                "monitor_id": self._monitor_id,
+                "attempt": attempt_num,
+                "delay_s": delay,
+            },
+        )
 
         reconnect_thread = threading.Thread(
             target=self._delayed_reconnect,
@@ -791,7 +816,11 @@ class MqttTransporter(AbstractTransporter):
 
     def _on_mqtt_connected(self, connected: bool):
         """Handle MQTT connection status changes."""
-        logger.debug(f"MQTT connection status changed: {connected}")
+        logger.debug(
+            "MQTT connection status changed: %s",
+            connected,
+            extra={"monitor_id": self._monitor_id, "connected": connected},
+        )
 
         if connected:
             self._handle_connection_established()
