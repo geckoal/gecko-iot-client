@@ -107,9 +107,18 @@ class FlowZone(AbstractZone):
             id=zone_id, zone_type=ZoneType.FLOW_ZONE, name=config["name"], config=config
         )
 
+        # Extract speed configuration at init time to avoid re-deriving from raw config
+        speed_value = config.get("speed")
+        self._speed_config: Optional[SpeedConfig] = (
+            speed_value if isinstance(speed_value, dict) else None
+        )
+
+        # Extract flow zone type at init time
+        self._flow_zone_type: FlowZoneType = self._determine_flow_zone_type(config)
+
         # Initialize flow zone specific attributes from config
         self.active: Optional[bool] = config.get("active")
-        self.speed: Optional[float] = config.get("speed")
+        self.speed: Optional[float] = config.get("speed") if not isinstance(speed_value, dict) else None
         self.initiators_: Optional[List[FlowZoneInitiator]] = config.get("initiators_")
 
         # Validate speed if present
@@ -128,10 +137,7 @@ class FlowZone(AbstractZone):
         Returns:
             SpeedConfig dictionary or None if not available
         """
-        speed_value = self.config.get("speed")
-        if isinstance(speed_value, dict):
-            return speed_value  # type: ignore
-        return None
+        return self._speed_config
 
     def _validate_speed(self, speed: float) -> None:
         """
@@ -188,7 +194,7 @@ class FlowZone(AbstractZone):
         Returns:
             FlowZoneType enum value
         """
-        return self._determine_flow_zone_type(self.config)
+        return self._flow_zone_type
 
     @property
     def capabilities(self) -> List[FlowZoneCapabilities]:
