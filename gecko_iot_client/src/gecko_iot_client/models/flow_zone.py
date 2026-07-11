@@ -109,8 +109,19 @@ class FlowZone(AbstractZone):
 
         # Initialize flow zone specific attributes from config
         self.active: Optional[bool] = config.get("active")
-        self.speed: Optional[float] = config.get("speed")
         self.initiators_: Optional[List[FlowZoneInitiator]] = config.get("initiators_")
+
+        # Runtime speed is a scalar. Range metadata stays in config["speed"] for
+        # speed_config / capabilities / presets (see SpeedConfig).
+        speed_raw = config.get("speed")
+        if isinstance(speed_raw, dict):
+            self.speed: Optional[float] = None
+            for key in ("value", "currentValue", "default", "initialValue"):
+                if key in speed_raw and isinstance(speed_raw[key], (int, float)):
+                    self.speed = float(speed_raw[key])
+                    break
+        else:
+            self.speed = speed_raw  # type: ignore[assignment]
 
         # Validate speed if present
         if self.speed is not None:
@@ -203,7 +214,8 @@ class FlowZone(AbstractZone):
             FlowZoneCapabilities.SUPPORTS_TURN_OFF,
         ]
 
-        if self.speed_config and self.speed_config["stepIncrement"] != 0:
+        # stepIncrement may be absent on some range wrappers; treat missing as 0.
+        if self.speed_config and self.speed_config.get("stepIncrement", 0) != 0:
             capabilities.append(FlowZoneCapabilities.SUPPORTS_SPEED_PRESETS)
 
         return capabilities

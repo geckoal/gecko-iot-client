@@ -18,26 +18,41 @@ from .zone_types import (  # This imports all zone types and registers them
 logger = logging.getLogger(__name__)
 
 
+_SCALAR_VALUE_KEYS = ("value", "currentValue", "default", "initialValue")
+
+
+def _is_range_config(field_value: dict) -> bool:
+    """Return True if dict looks like a min/max capability range (e.g. SpeedConfig)."""
+    return "minimum" in field_value and "maximum" in field_value
+
+
 def _extract_value_from_config(field_value: Any) -> Any:
     """
-    Extract actual value from config metadata like {'minimum': 0, 'maximum': 100}.
+    Normalize config fields.
+
+    Scalars pass through. Dicts that include minimum+maximum (SpeedConfig-style
+    ranges) are preserved whole so FlowZone.speed_config / capabilities / presets
+    keep working. Other value-wrapper dicts extract a scalar via known keys.
 
     Args:
         field_value: Configuration value (can be dict with metadata or direct value)
 
     Returns:
-        Extracted value or None if not found
+        Normalized value, preserved range dict, or None if not found
     """
-    if isinstance(field_value, dict):
-        # Look for actual value keys
-        for key in ["value", "currentValue", "default", "initialValue"]:
-            if key in field_value:
-                return field_value[key]
-        # Use minimum as fallback if no value found
-        if "minimum" in field_value:
-            return field_value["minimum"]
-        return None
-    return field_value
+    if not isinstance(field_value, dict):
+        return field_value
+
+    # Preserve range metadata — do not collapse to minimum/value alone.
+    # FlowZone.capabilities requires config["speed"] to remain a SpeedConfig dict.
+    if _is_range_config(field_value):
+        return field_value
+
+    for key in _SCALAR_VALUE_KEYS:
+        if key in field_value:
+            return field_value[key]
+
+    return None
 
 
 class ZoneConfigurationParser:
