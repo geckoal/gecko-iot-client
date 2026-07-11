@@ -5,6 +5,7 @@ Unit tests for zone configuration parser.
 import unittest
 from unittest.mock import patch
 
+from src.gecko_iot_client.models.flow_zone import FlowZoneCapabilities
 from src.gecko_iot_client.models.zone_parser import (
     ZoneConfigurationParser,
     _extract_value_from_config,
@@ -21,25 +22,30 @@ class TestZoneParserUtilities(unittest.TestCase):
         self.assertEqual(_extract_value_from_config("test"), "test")
         self.assertTrue(_extract_value_from_config(True))
 
-    def test_extract_value_from_config_with_value_key(self):
-        """Test extracting from config with 'value' key."""
+    def test_extract_preserves_range_with_value_key(self):
+        """Range configs with a current value stay intact (SpeedConfig)."""
         config = {"value": 50, "minimum": 0, "maximum": 100}
-        self.assertEqual(_extract_value_from_config(config), 50)
+        self.assertEqual(_extract_value_from_config(config), config)
 
-    def test_extract_value_from_config_with_current_value(self):
-        """Test extracting from config with 'currentValue' key."""
+    def test_extract_preserves_range_with_current_value(self):
+        """Range configs with currentValue stay intact."""
         config = {"currentValue": 75, "minimum": 0, "maximum": 100}
-        self.assertEqual(_extract_value_from_config(config), 75)
+        self.assertEqual(_extract_value_from_config(config), config)
 
-    def test_extract_value_from_config_with_default(self):
-        """Test extracting from config with 'default' key."""
+    def test_extract_preserves_range_with_default(self):
+        """Range configs with default stay intact."""
         config = {"default": 25, "minimum": 0, "maximum": 100}
-        self.assertEqual(_extract_value_from_config(config), 25)
+        self.assertEqual(_extract_value_from_config(config), config)
 
-    def test_extract_value_from_config_fallback_to_minimum(self):
-        """Test falling back to minimum when no value keys found."""
+    def test_extract_preserves_speed_range_config(self):
+        """Speed range with stepIncrement must not collapse to minimum."""
         config = {"minimum": 10, "maximum": 100, "stepIncrement": 5}
-        self.assertEqual(_extract_value_from_config(config), 10)
+        self.assertEqual(_extract_value_from_config(config), config)
+
+    def test_extract_value_wrapper_without_range(self):
+        """Non-range value wrappers still extract a scalar."""
+        config = {"value": 42, "unit": "percent"}
+        self.assertEqual(_extract_value_from_config(config), 42)
 
     def test_extract_value_from_config_no_value_found(self):
         """Test returning None when no value can be extracted."""
@@ -83,7 +89,7 @@ class TestZoneConfigurationParser(unittest.TestCase):
                     "speed": {
                         "minimum": 0,
                         "maximum": 100,
-                    },  # Will use minimum as default
+                    },  # Range only — no runtime value yet
                     "active": False,
                 },
             }
@@ -95,20 +101,52 @@ class TestZoneConfigurationParser(unittest.TestCase):
         flow_zones = result[ZoneType.FLOW_ZONE]
         self.assertEqual(len(flow_zones), 2)
 
-        # Check first zone
+        # Check first zone — runtime speed from value; range preserved for speed_config
         zone1 = flow_zones[0]
         self.assertIsInstance(zone1, FlowZone)
         self.assertEqual(zone1.id, "1")
         self.assertEqual(zone1.name, "Flow Zone 1")
         self.assertEqual(zone1.speed, 50.0)
+        self.assertIsNotNone(zone1.speed_config)
+        self.assertEqual(zone1.speed_config["minimum"], 0)
+        self.assertEqual(zone1.speed_config["maximum"], 100)
         self.assertTrue(zone1.active)
 
-        # Check second zone
+        # Check second zone — no scalar value key, runtime speed stays None
         zone2 = flow_zones[1]
         self.assertEqual(zone2.id, "2")
         self.assertEqual(zone2.name, "Flow Zone 2")
-        self.assertEqual(zone2.speed, 0.0)  # Should use minimum
+        self.assertIsNone(zone2.speed)
+        self.assertIsNotNone(zone2.speed_config)
         self.assertFalse(zone2.active)
+
+    def test_parse_flow_zone_retains_speed_presets_capability(self):
+        """Multi-speed ranges must expose SUPPORTS_SPEED_PRESETS and presets."""
+        zones_config = {
+            "flow": {
+                "1": {
+                    "name": "Pump 1",
+                    "speed": {
+                        "minimum": 0,
+                        "maximum": 100,
+                        "stepIncrement": 50,
+                    },
+                    "active": False,
+                }
+            }
+        }
+
+        result = self.parser.parse_zones_configuration(zones_config)
+        pump = result[ZoneType.FLOW_ZONE][0]
+
+        self.assertIsNotNone(pump.speed_config)
+        self.assertEqual(pump.speed_config["stepIncrement"], 50)
+        self.assertIn(
+            FlowZoneCapabilities.SUPPORTS_SPEED_PRESETS, pump.capabilities
+        )
+        self.assertEqual([p.speed for p in pump.presets], [0, 50, 100])
+        self.assertEqual([p.name for p in pump.presets], ["Low", "Medium", "High"])
+        self.assertIsNone(pump.speed)
 
     def test_parse_lighting_zones(self):
         """Test parsing lighting zone configuration."""

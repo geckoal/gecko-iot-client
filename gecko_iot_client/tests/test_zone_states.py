@@ -132,6 +132,31 @@ class TestFlowZone(unittest.TestCase):
         self.assertEqual(self.flow_zone.speed, 25.0)
         self.assertFalse(self.flow_zone.active)
 
+    def test_speed_range_config_enables_presets(self):
+        """SpeedConfig dict enables multi-speed capabilities without collapsing."""
+        from src.gecko_iot_client.models.flow_zone import FlowZoneCapabilities
+
+        zone = FlowZone(
+            "1",
+            {
+                "name": "Pump 1",
+                "speed": {
+                    "value": 50,
+                    "minimum": 0,
+                    "maximum": 100,
+                    "stepIncrement": 50,
+                },
+                "active": True,
+            },
+        )
+        self.assertEqual(zone.speed, 50.0)
+        self.assertIsNotNone(zone.speed_config)
+        self.assertEqual(zone.speed_config["stepIncrement"], 50)
+        self.assertIn(
+            FlowZoneCapabilities.SUPPORTS_SPEED_PRESETS, zone.capabilities
+        )
+        self.assertEqual([p.speed for p in zone.presets], [0, 50, 100])
+
 
 class TestLightingZone(unittest.TestCase):
     """Test LightingZone specific functionality."""
