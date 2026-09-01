@@ -136,7 +136,7 @@ class LightingZone(AbstractZone):
         rgb_color = RGB(r=r, g=g, b=b, i=i)
         self.rgbi = rgb_color
         self.active = True
-        self._publish_desired_state({"rgbi": rgb_color, "active": True})
+        self._publish_desired_state({"rgbi": rgb_color.model_dump(), "active": True})
 
     def _get_runtime_state_fields(self) -> set:
         """
