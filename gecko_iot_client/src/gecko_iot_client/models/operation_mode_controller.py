@@ -155,12 +155,14 @@ class OperationModeController:
         Set the operation mode by name.
 
         Args:
-            mode_name: String name of the mode (case-insensitive)
+            mode_name: String name of the mode (case-insensitive, spaces
+                or underscores accepted, e.g. "Super Savings" or
+                "SUPER_SAVINGS")
 
         Raises:
             ValueError: If mode name is not recognized
         """
-        mode_name_upper = mode_name.upper()
+        mode_name_upper = mode_name.upper().replace(" ", "_")
 
         # Map common names to enum values
         name_mapping = {

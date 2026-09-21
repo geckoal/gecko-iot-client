@@ -168,6 +168,26 @@ class TestOperationModeController(unittest.TestCase):
         self.assertIn("AWAY", repr_str)
         self.assertIn("0", repr_str)
 
+    def test_set_mode_by_name_with_space(self):
+        """Regression test: set_mode_by_name must accept the display-name
+        form of multi-word modes (e.g. "Super Savings", exactly what a
+        Home Assistant select entity's mode_name property produces), not
+        just the underscore/no-space enum-key forms. Previously
+        mode_name.upper() left the space intact ("SUPER SAVINGS"), which
+        matched neither the "SUPER_SAVINGS" nor "SUPERSAVINGS" mapping
+        keys and raised ValueError -- see issues #36 and #53."""
+        callback = Mock()
+        controller = OperationModeController()
+        controller.set_publish_callback(callback)
+
+        for name in ("Super Savings", "super savings", "SUPER_SAVINGS", "SuperSavings"):
+            with self.subTest(name=name):
+                callback.reset_mock()
+                controller.set_mode_by_name(name)
+                callback.assert_called_once_with(
+                    "operationMode", {"operationMode": OperationMode.SUPER_SAVINGS.value}
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
