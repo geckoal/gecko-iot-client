@@ -11,7 +11,13 @@ from awscrt import mqtt5
 from awsiot import mqtt5_client_builder
 
 from ..exceptions import ConfigurationError, ConnectionError
-from .constants import CONNECTION_TIMEOUT, PUBLISH_TIMEOUT, SUBSCRIPTION_TIMEOUT
+from .constants import (
+    CONNECTION_TIMEOUT,
+    KEEP_ALIVE_INTERVAL,
+    PING_TIMEOUT_MS,
+    PUBLISH_TIMEOUT,
+    SUBSCRIPTION_TIMEOUT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +107,8 @@ class MqttClient:
                 auth_authorizer_signature=auth_params["signature"],
                 client_id=client_id,
                 clean_start=True,
-                keep_alive_secs=30,
+                keep_alive_interval_sec=KEEP_ALIVE_INTERVAL,
+                ping_timeout_ms=PING_TIMEOUT_MS,
                 on_lifecycle_connection_success=self._on_connection_success,
                 on_lifecycle_connection_failure=self._on_connection_failure,
                 on_lifecycle_disconnection=self._on_disconnection,
